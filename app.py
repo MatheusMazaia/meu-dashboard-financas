@@ -12,7 +12,6 @@ st.set_page_config(page_title="Meu Dashboard", layout="wide")
 conn = sqlite3.connect('financas.db', check_same_thread=False)
 c = conn.cursor()
 
-# Criar tabelas se não existirem
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, data TEXT, tipo TEXT, categoria TEXT, valor REAL, descricao TEXT)''')
 conn.commit()
@@ -35,13 +34,16 @@ def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao):
     conn.commit()
 
 def buscar_transacoes(usuario):
-    c.execute("SELECT data, tipo, categoria, valor, descricao FROM transacoes WHERE usuario = ?", (usuario,))
+    # Agora buscamos o ID também para poder deletar depois
+    c.execute("SELECT id, data, tipo, categoria, valor, descricao FROM transacoes WHERE usuario = ?", (usuario,))
     dados = c.fetchall()
-    # Converte para um DataFrame do Pandas para facilitar os gráficos
-    return pd.DataFrame(dados, columns=['Data', 'Tipo', 'Categoria', 'Valor', 'Descrição'])
+    return pd.DataFrame(dados, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição'])
+
+def deletar_transacao(id_transacao):
+    c.execute("DELETE FROM transacoes WHERE id = ?", (id_transacao,))
+    conn.commit()
 
 # --- SISTEMA DE SESSÃO ---
-# Isso lembra se o usuário está logado ou não enquanto ele usa o app
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
 if 'usuario_atual' not in st.session_state:
@@ -50,8 +52,6 @@ if 'usuario_atual' not in st.session_state:
 # --- TELA DE LOGIN / CADASTRO ---
 if not st.session_state['logado']:
     st.title("🔒 Bem-vindo ao Sistema Financeiro")
-    
-    # Cria duas abas: uma para login e outra para criar conta
     aba_login, aba_cadastro = st.tabs(["Fazer Login", "Criar Conta"])
     
     with aba_login:
@@ -62,7 +62,7 @@ if not st.session_state['logado']:
             if verificar_login(usuario_login, senha_login):
                 st.session_state['logado'] = True
                 st.session_state['usuario_atual'] = usuario_login
-                st.rerun() # Atualiza a tela
+                st.rerun()
             else:
                 st.error("Usuário ou senha incorretos!")
                 
@@ -81,7 +81,20 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
-    # --- BARRA LATERAL (MENU INTERATIVO) ---
+    # --- MENU LATERAL (PERSONALIZAÇÃO DE CORES) ---
+    with st.sidebar.expander("🎨 Personalizar Visual"):
+        cor_fundo = st.color_picker("Cor de Fundo", "#0E1117")
+        cor_texto = st.color_picker("Cor do Texto", "#FAFAFA")
+        
+        # Injeta o CSS para mudar as cores do site em tempo real
+        st.markdown(f"""
+            <style>
+            .stApp {{ background-color: {cor_fundo}; }}
+            .stApp, h1, h2, h3, p, label {{ color: {cor_texto} !important; }}
+            </style>
+        """, unsafe_allow_html=True)
+        
+    st.sidebar.markdown("---")
     st.sidebar.title(f"👤 Olá, {usuario}")
     if st.sidebar.button("Sair (Logout)"):
         st.session_state['logado'] = False
@@ -91,42 +104,40 @@ else:
     st.sidebar.markdown("---")
     st.sidebar.subheader("➕ Adicionar Lançamento")
     
-    # Formulário para adicionar nova transação
-    with st.sidebar.form("form_transacao", clear_on_submit=True):
-        tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"])
-        data_lancamento = st.date_input("Data", datetime.today())
+    # REMOVEMOS O FORMULÁRIO para a caixinha atualizar instantaneamente
+    tipo_lancamento = st.sidebar.selectbox("Tipo", ["Despesa", "Entrada"])
+    
+    if tipo_lancamento == "Despesa":
+        categoria = st.sidebar.selectbox("Categoria", ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Outros"])
+    else:
+        categoria = st.sidebar.selectbox("Categoria", ["Salário", "Freelance", "Rendimento", "Outros"])
         
-        if tipo_lancamento == "Despesa":
-            categoria = st.selectbox("Categoria", ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Outros"])
-        else:
-            categoria = st.selectbox("Categoria", ["Salário", "Freelance", "Rendimento", "Outros"])
-            
-        valor_lancamento = st.number_input("Valor (R$)", min_value=0.01, format="%.2f")
-        descricao_lancamento = st.text_input("Descrição (Ex: Uber, Mercado, etc)")
-        
-        btn_salvar = st.form_submit_button("Salvar Lançamento")
-        
-        if btn_salvar:
-            adicionar_transacao(usuario, str(data_lancamento), tipo_lancamento, categoria, valor_lancamento, descricao_lancamento)
-            st.sidebar.success("Adicionado com sucesso!")
-            st.rerun()
+    # Data no formato Dia/Mês/Ano
+    data_lancamento = st.sidebar.date_input("Data", datetime.today(), format="DD/MM/YYYY")
+    valor_lancamento = st.sidebar.number_input("Valor (R$)", min_value=0.01, format="%.2f")
+    descricao_lancamento = st.sidebar.text_input("Descrição (Ex: Uber, Salário)")
+    
+    if st.sidebar.button("Salvar Lançamento"):
+        adicionar_transacao(usuario, str(data_lancamento), tipo_lancamento, categoria, valor_lancamento, descricao_lancamento)
+        st.sidebar.success("Adicionado com sucesso!")
+        st.rerun()
 
     # --- CORPO DO DASHBOARD ---
     st.title("📊 Seu Dashboard Financeiro")
     st.markdown("---")
     
-    # Busca os dados desse usuário específico no banco de dados
     df = buscar_transacoes(usuario)
     
     if df.empty:
-        st.info("Você ainda não tem lançamentos. Use o menu lateral para adicionar ganhos e gastos!")
+        st.info("Você ainda não tem lançamentos. Use o menu lateral para adicionar!")
     else:
-        # Cálculos Matemáticos
+        # Formata a data no Pandas para ficar DD/MM/YYYY
+        df['Data'] = pd.to_datetime(df['Data']).dt.strftime('%d/%m/%Y')
+        
         entradas = df[df['Tipo'] == 'Entrada']['Valor'].sum()
         despesas = df[df['Tipo'] == 'Despesa']['Valor'].sum()
         saldo = entradas - despesas
         
-        # Cards Superiores
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Entradas", f"R$ {entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -137,22 +148,56 @@ else:
             
         st.markdown("---")
         
-        # Gráficos (Apenas se houver despesas)
+        # --- GRÁFICOS ---
+        col_graf1, col_graf2 = st.columns(2)
+        
         df_despesas = df[df['Tipo'] == 'Despesa']
-        if not df_despesas.empty:
-            resumo_cat = df_despesas.groupby('Categoria')['Valor'].sum().reset_index()
+        df_entradas = df[df['Tipo'] == 'Entrada']
+        
+        with col_graf1:
+            st.subheader("📉 Distribuição de Despesas")
+            if not df_despesas.empty:
+                resumo_despesas = df_despesas.groupby('Categoria')['Valor'].sum().reset_index()
+                fig_rosca_desp = px.pie(resumo_despesas, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
+                st.plotly_chart(fig_rosca_desp, use_container_width=True)
+            else:
+                st.write("Sem despesas registradas.")
+                
+        with col_graf2:
+            st.subheader("📈 Distribuição de Entradas")
+            if not df_entradas.empty:
+                resumo_entradas = df_entradas.groupby('Categoria')['Valor'].sum().reset_index()
+                fig_rosca_ent = px.pie(resumo_entradas, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
+                st.plotly_chart(fig_rosca_ent, use_container_width=True)
+            else:
+                st.write("Sem entradas registradas.")
+                
+        st.markdown("---")
+        
+        # --- TABELA E DELETAR ---
+        col_tabela, col_deletar = st.columns([2, 1])
+        
+        with col_tabela:
+            st.subheader("📋 Extrato Detalhado")
+            # Exibe a tabela formatando o valor para R$
+            st.dataframe(
+                df.style.format({'Valor': 'R$ {:.2f}'}), 
+                use_container_width=True, 
+                hide_index=True
+            )
             
-            graf_col1, graf_col2 = st.columns(2)
-            with graf_col1:
-                st.subheader("Distribuição de Despesas")
-                fig_rosca = px.pie(resumo_cat, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
-                st.plotly_chart(fig_rosca, use_container_width=True)
-                
-            with graf_col2:
-                st.subheader("Despesas por Categoria")
-                fig_barras = px.bar(resumo_cat, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark")
-                st.plotly_chart(fig_barras, use_container_width=True)
-                
-        # Tabela Detalhada no final
-        st.subheader("Extrato Detalhado")
-        st.dataframe(df, use_container_width=True)
+        with col_deletar:
+            st.subheader("⚙️ Gerenciar Lançamentos")
+            st.write("Para editar, exclua o lançamento incorreto e crie um novo.")
+            
+            # Cria uma lista bonita para a pessoa escolher qual deletar
+            opcoes_deletar = df.apply(lambda row: f"{row['ID']} | {row['Data']} - {row['Descrição']} (R$ {row['Valor']})", axis=1).tolist()
+            
+            lancamento_selecionado = st.selectbox("Selecione para excluir:", opcoes_deletar)
+            
+            if st.button("🗑️ Excluir Lançamento"):
+                if lancamento_selecionado:
+                    id_para_deletar = lancamento_selecionado.split(" | ")[0]
+                    deletar_transacao(id_para_deletar)
+                    st.success("Lançamento apagado!")
+                    st.rerun()
