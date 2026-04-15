@@ -81,19 +81,6 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
-    # --- MENU LATERAL (PERSONALIZAÇÃO DE CORES) ---
-    with st.sidebar.expander("🎨 Personalizar Visual"):
-        cor_fundo = st.color_picker("Cor de Fundo", "#0E1117")
-        cor_texto = st.color_picker("Cor do Texto", "#FAFAFA")
-        
-        # Injeta o CSS para mudar as cores do site em tempo real
-        st.markdown(f"""
-            <style>
-            .stApp {{ background-color: {cor_fundo}; }}
-            .stApp, h1, h2, h3, p, label {{ color: {cor_texto} !important; }}
-            </style>
-        """, unsafe_allow_html=True)
-        
     st.sidebar.markdown("---")
     st.sidebar.title(f"👤 Olá, {usuario}")
     if st.sidebar.button("Sair (Logout)"):
