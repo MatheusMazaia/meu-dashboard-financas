@@ -201,18 +201,33 @@ else:
             }
         )
         
-        if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
+if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
             if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
+                
+                # 1. Deletando com conversão para int()
                 for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
-                    id_deletar = df.iloc[row_idx]["ID"]
+                    id_deletar = int(df.iloc[row_idx]["ID"]) # <--- O segredo está aqui!
                     deletar_transacao(id_deletar)
                 
+                # 2. Atualizando com conversão para int() e float()
                 for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
-                    id_editar = df.iloc[int(row_idx)]["ID"]
+                    id_editar = int(df.iloc[int(row_idx)]["ID"]) # <--- Aqui também!
                     linha_original = df.iloc[int(row_idx)].to_dict()
+                    
                     for col, novo_valor in alteracoes.items():
                         linha_original[col] = novo_valor
-                    atualizar_transacao(id_editar, str(linha_original["Data"]), linha_original["Tipo"], linha_original["Categoria"], linha_original["Valor"], linha_original["Descrição"])
+                        
+                    # Traduzindo o valor para o formato puro do Python
+                    valor_corrigido = float(linha_original["Valor"])
+                        
+                    atualizar_transacao(
+                        id_editar, 
+                        str(linha_original["Data"]), 
+                        linha_original["Tipo"], 
+                        linha_original["Categoria"], 
+                        valor_corrigido, 
+                        linha_original["Descrição"]
+                    )
                     
                 st.success("Tabela atualizada com sucesso no Banco de Dados!")
                 st.rerun()
