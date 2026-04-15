@@ -181,7 +181,7 @@ else:
         st.markdown("---")
         
 st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
-        st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
+st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
         
         df_editavel = df.copy()
         # Tratamento seguro da data para exibição no calendário
