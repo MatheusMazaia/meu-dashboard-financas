@@ -180,11 +180,12 @@ else:
                 
         st.markdown("---")
         
-        st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
+st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
         st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
         
         df_editavel = df.copy()
-        df_editavel['Data'] = pd.to_datetime(df_editavel['Data']).dt.date
+        # Tratamento seguro da data para exibição no calendário
+        df_editavel['Data'] = pd.to_datetime(df_editavel['Data'], format='mixed', dayfirst=True).dt.date
         
         mudancas = st.data_editor(
             df_editavel,
@@ -201,33 +202,36 @@ else:
             }
         )
         
-if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
-            if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
-                
-                # 1. Deletando com conversão para int()
-                for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
-                    id_deletar = int(df.iloc[row_idx]["ID"]) # <--- O segredo está aqui!
-                    deletar_transacao(id_deletar)
-                
-                # 2. Atualizando com conversão para int() e float()
-                for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
-                    id_editar = int(df.iloc[int(row_idx)]["ID"]) # <--- Aqui também!
-                    linha_original = df.iloc[int(row_idx)].to_dict()
+        # --- O ESCUDO MÁGICO ---
+        # Só tenta ler a tabela se ela já existir na memória do site
+        if "editor_tabela" in st.session_state:
+            if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
+                if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
                     
-                    for col, novo_valor in alteracoes.items():
-                        linha_original[col] = novo_valor
-                        
-                    # Traduzindo o valor para o formato puro do Python
-                    valor_corrigido = float(linha_original["Valor"])
-                        
-                    atualizar_transacao(
-                        id_editar, 
-                        str(linha_original["Data"]), 
-                        linha_original["Tipo"], 
-                        linha_original["Categoria"], 
-                        valor_corrigido, 
-                        linha_original["Descrição"]
-                    )
+                    # 1. Deletando com conversão
+                    for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
+                        id_deletar = int(df.iloc[row_idx]["ID"])
+                        deletar_transacao(id_deletar)
                     
-                st.success("Tabela atualizada com sucesso no Banco de Dados!")
-                st.rerun()
+                    # 2. Atualizando com conversão
+                    for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
+                        id_editar = int(df.iloc[int(row_idx)]["ID"])
+                        linha_original = df.iloc[int(row_idx)].to_dict()
+                        
+                        for col, novo_valor in alteracoes.items():
+                            linha_original[col] = novo_valor
+                            
+                        # Formatando o valor para float
+                        valor_corrigido = float(linha_original["Valor"])
+                            
+                        atualizar_transacao(
+                            id_editar, 
+                            str(linha_original["Data"]), 
+                            linha_original["Tipo"], 
+                            linha_original["Categoria"], 
+                            valor_corrigido, 
+                            linha_original["Descrição"]
+                        )
+                        
+                    st.success("Tabela atualizada com sucesso no Banco de Dados!")
+                    st.rerun()
