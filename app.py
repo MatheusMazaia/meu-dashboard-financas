@@ -1,52 +1,55 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import sqlite3
+import psycopg2
+from psycopg2 import IntegrityError
 import hashlib
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Meu Dashboard", layout="wide")
 
-# --- CONEXÃO COM BANCO DE DADOS (SQLite) ---
-conn = sqlite3.connect('financas.db', check_same_thread=False)
+# --- CONEXÃO COM BANCO DE DADOS (PostgreSQL / Neon) ---
+# O Streamlit esconde a conexão no cache para o site ficar muito rápido
+@st.cache_resource
+def init_connection():
+    # Ele puxa a senha mágica lá daquele cofre que criamos!
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
+
+conn = init_connection()
+conn.autocommit = True # Salva tudo instantaneamente
 c = conn.cursor()
 
-c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)''')
-c.execute('''CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, data TEXT, tipo TEXT, categoria TEXT, valor REAL, descricao TEXT)''')
-conn.commit()
+# Cria as tabelas no Neon (se já não existirem)
+c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario VARCHAR(255) PRIMARY KEY, senha VARCHAR(255))''')
+c.execute('''CREATE TABLE IF NOT EXISTS transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), tipo VARCHAR(50), categoria VARCHAR(255), valor REAL, descricao TEXT)''')
 
 # --- FUNÇÕES DE SEGURANÇA E BANCO ---
 def gerar_hash(senha):
     return hashlib.sha256(str.encode(senha)).hexdigest()
 
 def adicionar_usuario(usuario, senha):
-    c.execute("INSERT INTO usuarios (usuario, senha) VALUES (?, ?)", (usuario, gerar_hash(senha)))
-    conn.commit()
+    c.execute("INSERT INTO usuarios (usuario, senha) VALUES (%s, %s)", (usuario, gerar_hash(senha)))
 
 def verificar_login(usuario, senha):
-    c.execute("SELECT * FROM usuarios WHERE usuario = ? AND senha = ?", (usuario, gerar_hash(senha)))
+    c.execute("SELECT * FROM usuarios WHERE usuario = %s AND senha = %s", (usuario, gerar_hash(senha)))
     return c.fetchone()
 
 def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao):
-    c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao) VALUES (?, ?, ?, ?, ?, ?)", 
+    c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao) VALUES (%s, %s, %s, %s, %s, %s)", 
               (usuario, data, tipo, categoria, valor, descricao))
-    conn.commit()
 
 def buscar_transacoes(usuario):
-    c.execute("SELECT id, data, tipo, categoria, valor, descricao FROM transacoes WHERE usuario = ?", (usuario,))
+    c.execute("SELECT id, data, tipo, categoria, valor, descricao FROM transacoes WHERE usuario = %s", (usuario,))
     dados = c.fetchall()
     return pd.DataFrame(dados, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição'])
 
 def deletar_transacao(id_transacao):
-    c.execute("DELETE FROM transacoes WHERE id = ?", (id_transacao,))
-    conn.commit()
+    c.execute("DELETE FROM transacoes WHERE id = %s", (id_transacao,))
 
-# Nova função para atualizar os dados editados na tabela
 def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao):
-    c.execute("UPDATE transacoes SET data=?, tipo=?, categoria=?, valor=?, descricao=? WHERE id=?", 
+    c.execute("UPDATE transacoes SET data=%s, tipo=%s, categoria=%s, valor=%s, descricao=%s WHERE id=%s", 
               (data, tipo, categoria, valor, descricao, id_transacao))
-    conn.commit()
 
 # --- SISTEMA DE SESSÃO ---
 if 'logado' not in st.session_state:
@@ -64,9 +67,10 @@ if not st.session_state['logado']:
         usuario_login = st.text_input("Usuário", key="login_user")
         senha_login = st.text_input("Senha", type="password", key="login_pass")
         if st.button("Entrar"):
-            if verificar_login(usuario_login, senha_login):
+            user_limpo = usuario_login.strip().lower()
+            if verificar_login(user_limpo, senha_login):
                 st.session_state['logado'] = True
-                st.session_state['usuario_atual'] = usuario_login
+                st.session_state['usuario_atual'] = user_limpo
                 st.rerun()
             else:
                 st.error("Usuário ou senha incorretos!")
@@ -76,15 +80,19 @@ if not st.session_state['logado']:
         novo_usuario = st.text_input("Novo Usuário")
         nova_senha = st.text_input("Nova Senha", type="password")
         if st.button("Cadastrar"):
-            try:
-                adicionar_usuario(novo_usuario, nova_senha)
-                # MUDANÇA 1: Auto-login instantâneo após cadastrar!
-                st.session_state['logado'] = True
-                st.session_state['usuario_atual'] = novo_usuario
-                st.success("Conta criada com sucesso! Carregando dashboard...")
-                st.rerun()
-            except sqlite3.IntegrityError:
-                st.error("Esse nome de usuário já existe. Escolha outro.")
+            novo_user_limpo = novo_usuario.strip().lower()
+            if novo_user_limpo == "" or nova_senha == "":
+                st.warning("Por favor, preencha o usuário e a senha.")
+            else:
+                try:
+                    adicionar_usuario(novo_user_limpo, nova_senha)
+                    st.session_state['logado'] = True
+                    st.session_state['usuario_atual'] = novo_user_limpo
+                    st.success("Conta criada com sucesso! Carregando dashboard...")
+                    st.rerun()
+                # Tratamento de erro específico para usuários duplicados no Postgres
+                except IntegrityError: 
+                    st.error("Esse nome de usuário já existe. Escolha outro.")
 
 # --- TELA PRINCIPAL (DASHBOARD) ---
 else:
@@ -115,7 +123,6 @@ else:
         st.sidebar.success("Adicionado com sucesso!")
         st.rerun()
 
-    # --- CORPO DO DASHBOARD ---
     st.title("📊 Seu Dashboard Financeiro")
     st.markdown("---")
     
@@ -140,7 +147,6 @@ else:
             
         st.markdown("---")
         
-        # --- MUDANÇA 3: OS 4 GRÁFICOS ---
         df_despesas = df[df['Tipo'] == 'Despesa']
         df_entradas = df[df['Tipo'] == 'Entrada']
         
@@ -174,23 +180,20 @@ else:
                 
         st.markdown("---")
         
-        # --- MUDANÇA 2: A NOVA TABELA MÁGICA ---
         st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
         st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
         
-        # Prepara a data para o calendário funcionar dentro da tabela
         df_editavel = df.copy()
         df_editavel['Data'] = pd.to_datetime(df_editavel['Data']).dt.date
         
-        # O data_editor é a evolução do dataframe
         mudancas = st.data_editor(
             df_editavel,
             hide_index=True,
             use_container_width=True,
-            num_rows="dynamic", # Isso ativa a opção de apagar linhas!
+            num_rows="dynamic",
             key="editor_tabela",
             column_config={
-                "ID": st.column_config.NumberColumn("ID", disabled=True), # Ninguém mexe no ID!
+                "ID": st.column_config.NumberColumn("ID", disabled=True),
                 "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                 "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Entrada"]),
                 "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]),
@@ -198,31 +201,18 @@ else:
             }
         )
         
-        # O botão "Salvar" só aparece magicamente se a pessoa mexer em alguma coisa na tabela
         if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
             if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
-                
-                # 1. Varre e apaga as linhas que foram pra lixeira
                 for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
                     id_deletar = df.iloc[row_idx]["ID"]
                     deletar_transacao(id_deletar)
                 
-                # 2. Varre e atualiza as células que foram editadas
                 for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
                     id_editar = df.iloc[int(row_idx)]["ID"]
                     linha_original = df.iloc[int(row_idx)].to_dict()
-                    
                     for col, novo_valor in alteracoes.items():
                         linha_original[col] = novo_valor
-                        
-                    atualizar_transacao(
-                        id_editar, 
-                        str(linha_original["Data"]), 
-                        linha_original["Tipo"], 
-                        linha_original["Categoria"], 
-                        linha_original["Valor"], 
-                        linha_original["Descrição"]
-                    )
+                    atualizar_transacao(id_editar, str(linha_original["Data"]), linha_original["Tipo"], linha_original["Categoria"], linha_original["Valor"], linha_original["Descrição"])
                     
                 st.success("Tabela atualizada com sucesso no Banco de Dados!")
                 st.rerun()
