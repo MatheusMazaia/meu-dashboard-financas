@@ -180,8 +180,8 @@ else:
                 
         st.markdown("---")
         
-st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
-st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
+        st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
+        st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
         
         df_editavel = df.copy()
         # Tratamento seguro da data para exibição no calendário
@@ -203,17 +203,14 @@ st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor
         )
         
         # --- O ESCUDO MÁGICO ---
-        # Só tenta ler a tabela se ela já existir na memória do site
         if "editor_tabela" in st.session_state:
             if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
                 if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
                     
-                    # 1. Deletando com conversão
                     for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
                         id_deletar = int(df.iloc[row_idx]["ID"])
                         deletar_transacao(id_deletar)
                     
-                    # 2. Atualizando com conversão
                     for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
                         id_editar = int(df.iloc[int(row_idx)]["ID"])
                         linha_original = df.iloc[int(row_idx)].to_dict()
@@ -221,7 +218,6 @@ st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor
                         for col, novo_valor in alteracoes.items():
                             linha_original[col] = novo_valor
                             
-                        # Formatando o valor para float
                         valor_corrigido = float(linha_original["Valor"])
                             
                         atualizar_transacao(
