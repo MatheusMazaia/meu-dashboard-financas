@@ -10,15 +10,22 @@ from datetime import datetime
 st.set_page_config(page_title="Meu Dashboard", layout="wide")
 
 # --- CONEXÃO COM BANCO DE DADOS (PostgreSQL / Neon) ---
-# O Streamlit esconde a conexão no cache para o site ficar muito rápido
-@st.cache_resource
+@st.cache_resource(ttl=300) # A memória expira a cada 5 minutos
 def init_connection():
-    # Ele puxa a senha mágica lá daquele cofre que criamos!
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 conn = init_connection()
-conn.autocommit = True # Salva tudo instantaneamente
-c = conn.cursor()
+
+# Tenta usar a conexão. Se o Neon dormiu e a conexão quebrou, ele entra no "except"
+try:
+    conn.autocommit = True
+    c = conn.cursor()
+    c.execute("SELECT 1") # Um "ping" rápido só para testar se está acordado
+except (psycopg2.OperationalError, psycopg2.InterfaceError):
+    st.cache_resource.clear() # Esquece a conexão morta
+    conn = init_connection()  # Inicia uma conexão fresquinha
+    conn.autocommit = True
+    c = conn.cursor()
 
 # Cria as tabelas no Neon (se já não existirem)
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario VARCHAR(255) PRIMARY KEY, senha VARCHAR(255))''')
