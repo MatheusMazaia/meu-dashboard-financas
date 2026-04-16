@@ -184,8 +184,8 @@ else:
         st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
         
         df_editavel = df.copy()
-        # Tratamento seguro da data para exibição no calendário
-        df_editavel['Data'] = pd.to_datetime(df_editavel['Data'], format='mixed', dayfirst=True).dt.date
+        # O Pandas lê automaticamente o padrão do banco de dados
+        df_editavel['Data'] = pd.to_datetime(df_editavel['Data']).dt.date
         
         mudancas = st.data_editor(
             df_editavel,
