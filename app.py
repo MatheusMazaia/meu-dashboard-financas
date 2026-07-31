@@ -140,101 +140,142 @@ else:
     else:
         df['Valor'] = df['Valor'].astype(float)
         
-        entradas = df[df['Tipo'] == 'Entrada']['Valor'].sum()
-        despesas = df[df['Tipo'] == 'Despesa']['Valor'].sum()
-        saldo = entradas - despesas
+        # --- MUDANÇA 1: FILTRO MENSAL ---
+        # Lemos a data e criamos uma coluna invisível só com o 'Mês/Ano'
+        df['Data_dt'] = pd.to_datetime(df['Data'])
+        df['MesAno'] = df['Data_dt'].dt.strftime('%m/%Y')
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Entradas", f"R$ {entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        with col2:
-            st.metric("Despesas", f"R$ {despesas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        with col3:
-            st.metric("Saldo Atual", f"R$ {saldo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta=f"R$ {saldo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        # Pega todos os meses que você já tem cadastrados, sem repetir
+        lista_meses = ["Todos os Meses"] + sorted(df['MesAno'].unique().tolist(), reverse=True)
+        
+        # Cria a caixinha de seleção num cantinho
+        col_filtro, _ = st.columns([1, 3])
+        with col_filtro:
+            mes_selecionado = st.selectbox("📅 Filtrar por Mês", lista_meses)
             
-        st.markdown("---")
-        
-        df_despesas = df[df['Tipo'] == 'Despesa']
-        df_entradas = df[df['Tipo'] == 'Entrada']
-        
-        st.subheader("📉 Visão de Despesas")
-        col_graf_d1, col_graf_d2 = st.columns(2)
-        with col_graf_d1:
-            if not df_despesas.empty:
-                resumo_desp = df_despesas.groupby('Categoria')['Valor'].sum().reset_index()
-                fig_rosca_desp = px.pie(resumo_desp, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
-                st.plotly_chart(fig_rosca_desp, use_container_width=True)
-            else:
-                st.write("Sem despesas registradas.")
-        with col_graf_d2:
-            if not df_despesas.empty:
-                fig_barras_desp = px.bar(resumo_desp, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark")
-                st.plotly_chart(fig_barras_desp, use_container_width=True)
-
-        st.subheader("📈 Visão de Entradas")
-        col_graf_e1, col_graf_e2 = st.columns(2)
-        with col_graf_e1:
-            if not df_entradas.empty:
-                resumo_ent = df_entradas.groupby('Categoria')['Valor'].sum().reset_index()
-                fig_rosca_ent = px.pie(resumo_ent, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
-                st.plotly_chart(fig_rosca_ent, use_container_width=True)
-            else:
-                st.write("Sem entradas registradas.")
-        with col_graf_e2:
-            if not df_entradas.empty:
-                fig_barras_ent = px.bar(resumo_ent, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark")
-                st.plotly_chart(fig_barras_ent, use_container_width=True)
+        # Aplica o filtro na tabela
+        if mes_selecionado != "Todos os Meses":
+            df_filtrado = df[df['MesAno'] == mes_selecionado]
+        else:
+            df_filtrado = df
+            
+        if df_filtrado.empty:
+            st.warning("Nenhum lançamento encontrado para este período.")
+        else:
+            # Calcula os totais baseados SÓ no mês escolhido
+            entradas = df_filtrado[df_filtrado['Tipo'] == 'Entrada']['Valor'].sum()
+            despesas = df_filtrado[df_filtrado['Tipo'] == 'Despesa']['Valor'].sum()
+            saldo = entradas - despesas
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Entradas", f"R$ {entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col2:
+                st.metric("Despesas", f"R$ {despesas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col3:
+                st.metric("Saldo Atual", f"R$ {saldo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta=f"R$ {saldo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                 
-        st.markdown("---")
-        
-        st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
-        st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
-        
-        df_editavel = df.copy()
-        # O Pandas lê automaticamente o padrão do banco de dados
-        df_editavel['Data'] = pd.to_datetime(df_editavel['Data']).dt.date
-        
-        mudancas = st.data_editor(
-            df_editavel,
-            hide_index=True,
-            use_container_width=True,
-            num_rows="dynamic",
-            key="editor_tabela",
-            column_config={
-                "ID": st.column_config.NumberColumn("ID", disabled=True),
-                "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Entrada"]),
-                "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]),
-                "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f", min_value=0.0)
-            }
-        )
-        
-        # --- O ESCUDO MÁGICO ---
-        if "editor_tabela" in st.session_state:
-            if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
-                if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
-                    
-                    for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
-                        id_deletar = int(df.iloc[row_idx]["ID"])
-                        deletar_transacao(id_deletar)
-                    
-                    for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
-                        id_editar = int(df.iloc[int(row_idx)]["ID"])
-                        linha_original = df.iloc[int(row_idx)].to_dict()
+            st.markdown("---")
+            
+            df_despesas = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
+            df_entradas = df_filtrado[df_filtrado['Tipo'] == 'Entrada']
+            
+            # --- MUDANÇA 2 E 3: VISÃO GERAL E CAIXAS MINIMIZÁVEIS ---
+            # O 'expanded=True' significa que essa caixa já vem aberta por padrão
+            with st.expander("📊 Visão Geral (Entradas vs Despesas)", expanded=True):
+                if entradas > 0 or despesas > 0:
+                    df_geral = pd.DataFrame({
+                        'Tipo': ['Entradas', 'Despesas'],
+                        'Valor': [entradas, despesas]
+                    })
+                    # Gráfico de rosca com cores fixas (Verde pra entrada, Vermelho pra despesa)
+                    fig_geral = px.pie(df_geral, values='Valor', names='Tipo', hole=0.5, template="plotly_dark",
+                                       color='Tipo', color_discrete_map={'Entradas': '#00CC96', 'Despesas': '#EF553B'})
+                    st.plotly_chart(fig_geral, use_container_width=True)
+                else:
+                    st.write("Adicione movimentações para ver a Visão Geral.")
+
+            # O 'expanded=False' faz eles começarem minimizados
+            with st.expander("📉 Visão de Despesas", expanded=False):
+                col_graf_d1, col_graf_d2 = st.columns(2)
+                with col_graf_d1:
+                    if not df_despesas.empty:
+                        resumo_desp = df_despesas.groupby('Categoria')['Valor'].sum().reset_index()
+                        fig_rosca_desp = px.pie(resumo_desp, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
+                        st.plotly_chart(fig_rosca_desp, use_container_width=True)
+                    else:
+                        st.write("Sem despesas registradas neste período.")
+                with col_graf_d2:
+                    if not df_despesas.empty:
+                        fig_barras_desp = px.bar(resumo_desp, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark")
+                        st.plotly_chart(fig_barras_desp, use_container_width=True)
+
+            with st.expander("📈 Visão de Entradas", expanded=False):
+                col_graf_e1, col_graf_e2 = st.columns(2)
+                with col_graf_e1:
+                    if not df_entradas.empty:
+                        resumo_ent = df_entradas.groupby('Categoria')['Valor'].sum().reset_index()
+                        fig_rosca_ent = px.pie(resumo_ent, values='Valor', names='Categoria', hole=0.5, template="plotly_dark")
+                        st.plotly_chart(fig_rosca_ent, use_container_width=True)
+                    else:
+                        st.write("Sem entradas registradas neste período.")
+                with col_graf_e2:
+                    if not df_entradas.empty:
+                        fig_barras_ent = px.bar(resumo_ent, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark")
+                        st.plotly_chart(fig_barras_ent, use_container_width=True)
                         
-                        for col, novo_valor in alteracoes.items():
-                            linha_original[col] = novo_valor
-                            
-                        valor_corrigido = float(linha_original["Valor"])
-                            
-                        atualizar_transacao(
-                            id_editar, 
-                            str(linha_original["Data"]), 
-                            linha_original["Tipo"], 
-                            linha_original["Categoria"], 
-                            valor_corrigido, 
-                            linha_original["Descrição"]
-                        )
+            st.markdown("---")
+            
+            st.subheader("📋 Extrato Detalhado (Gerenciar Lançamentos)")
+            st.info("💡 **Dica:** Para alterar algo, dê **dois cliques** em cima do valor. Para excluir, selecione o quadradinho no início da linha e aperte o botão 'Lixeira' (ou a tecla Delete). Depois, clique no botão vermelho para salvar!")
+            
+            df_editavel = df_filtrado.copy()
+            df_editavel['Data'] = pd.to_datetime(df_editavel['Data']).dt.date
+            
+            # Esconde as colunas de Mês/Ano que criamos lá em cima só para o filtro não aparecer na tabela
+            df_editavel = df_editavel.drop(columns=['Data_dt', 'MesAno'])
+            
+            mudancas = st.data_editor(
+                df_editavel,
+                hide_index=True,
+                use_container_width=True,
+                num_rows="dynamic",
+                key="editor_tabela",
+                column_config={
+                    "ID": st.column_config.NumberColumn("ID", disabled=True),
+                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Entrada"]),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]),
+                    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f", min_value=0.0)
+                }
+            )
+            
+            if "editor_tabela" in st.session_state:
+                if st.session_state["editor_tabela"]["edited_rows"] or st.session_state["editor_tabela"]["deleted_rows"]:
+                    if st.button("💾 Confirmar Alterações da Tabela", type="primary"):
                         
-                    st.success("Tabela atualizada com sucesso no Banco de Dados!")
-                    st.rerun()
+                        for row_idx in st.session_state["editor_tabela"]["deleted_rows"]:
+                            # Usa o df_editavel para pegar o ID correto mesmo com o filtro ativo!
+                            id_deletar = int(df_editavel.iloc[row_idx]["ID"])
+                            deletar_transacao(id_deletar)
+                        
+                        for row_idx, alteracoes in st.session_state["editor_tabela"]["edited_rows"].items():
+                            id_editar = int(df_editavel.iloc[int(row_idx)]["ID"])
+                            linha_original = df_editavel.iloc[int(row_idx)].to_dict()
+                            
+                            for col, novo_valor in alteracoes.items():
+                                linha_original[col] = novo_valor
+                                
+                            valor_corrigido = float(linha_original["Valor"])
+                                
+                            atualizar_transacao(
+                                id_editar, 
+                                str(linha_original["Data"]), 
+                                linha_original["Tipo"], 
+                                linha_original["Categoria"], 
+                                valor_corrigido, 
+                                linha_original["Descrição"]
+                            )
+                            
+                        st.success("Tabela atualizada com sucesso no Banco de Dados!")
+                        st.rerun()
