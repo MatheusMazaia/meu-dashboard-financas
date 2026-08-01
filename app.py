@@ -240,7 +240,7 @@ else:
                     gasto_cat = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Categoria'] == cat)]['Valor'].sum()
                     pct = gasto_cat / limite if limite > 0 else 0
                     
-                    st.write(f"**{cat}**: Gasto R${gasto_cat:.2f} de R${limite:.2f}")
+                    st.write(f"**{cat}**: Gasto R\${gasto_cat:.2f} de R\${limite:.2f}")
                     # A barra não pode passar de 100% (1.0) no código, então limitamos com min()
                     st.progress(min(pct, 1.0))
                     
