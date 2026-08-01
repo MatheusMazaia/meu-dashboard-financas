@@ -320,7 +320,8 @@ else:
             )
             
             # NOVA FUNÇÃO: Botão de Exportar para Excel/CSV
-            csv_dados = df_editavel.to_csv(index=False).encode('utf-8')
+            # O sep=';' separa as colunas pro Excel BR, e o utf-8-sig arruma os acentos!
+            csv_dados = df_editavel.to_csv(index=False, sep=';').encode('utf-8-sig')
             nome_arquivo = f"extrato_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos os Meses" else "extrato_completo.csv"
             
             st.download_button(
