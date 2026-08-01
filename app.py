@@ -180,7 +180,8 @@ else:
         
         fig_linha = px.line(resumo_linha, x='Mes_Data', y='Valor', color='Tipo', markers=True,
                             template="plotly_dark", color_discrete_map={'Entrada': '#00CC96', 'Despesa': '#EF553B'})
-        fig_linha.update_xaxes(title="", tickformat="%m/%Y")
+        # O dtick="M1" força o gráfico a não repetir os meses no eixo de baixo
+        fig_linha.update_xaxes(title="", tickformat="%m/%Y", dtick="M1")
         st.plotly_chart(fig_linha, use_container_width=True)
         
         # Aplica o filtro na tabela para o restante do app
@@ -219,15 +220,15 @@ else:
                 delta_despesa = despesas - despesas_ant
                 delta_saldo = saldo - saldo_ant
             
-            # Exibição dos Totais com as Setinhas
+            # Exibição dos Totais com as Setinhas arredondadas
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Entradas", f"R$ {entradas:,.2f}", delta=float(delta_entrada) if delta_entrada is not None else None)
+                st.metric("Entradas", f"R$ {entradas:,.2f}", delta=round(delta_entrada, 2) if delta_entrada is not None else None)
             with col2:
                 # delta_color="inverse" faz a seta vermelha se a despesa SUBIR (o que é ruim)
-                st.metric("Despesas", f"R$ {despesas:,.2f}", delta=float(delta_despesa) if delta_despesa is not None else None, delta_color="inverse")
+                st.metric("Despesas", f"R$ {despesas:,.2f}", delta=round(delta_despesa, 2) if delta_despesa is not None else None, delta_color="inverse")
             with col3:
-                st.metric("Saldo Atual", f"R$ {saldo:,.2f}", delta=float(delta_saldo) if delta_saldo is not None else None)
+                st.metric("Saldo Atual", f"R$ {saldo:,.2f}", delta=round(delta_saldo, 2) if delta_saldo is not None else None)
                 
             st.markdown("---")
             
@@ -239,7 +240,7 @@ else:
                     gasto_cat = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Categoria'] == cat)]['Valor'].sum()
                     pct = gasto_cat / limite if limite > 0 else 0
                     
-                    st.write(f"**{cat}**: Gasto R$ {gasto_cat:.2f} de R$ {limite:.2f}")
+                    st.write(f"**{cat}**: Gasto R${gasto_cat:.2f} de R${limite:.2f}")
                     # A barra não pode passar de 100% (1.0) no código, então limitamos com min()
                     st.progress(min(pct, 1.0))
                     
