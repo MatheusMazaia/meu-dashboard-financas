@@ -33,8 +33,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS transacoes (id SERIAL PRIMARY KEY, usuar
 c.execute('''CREATE TABLE IF NOT EXISTS metas (usuario VARCHAR(255), categoria VARCHAR(255), limite REAL, PRIMARY KEY (usuario, categoria))''')
 c.execute('''CREATE TABLE IF NOT EXISTS investimentos (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), tipo VARCHAR(50), valor REAL, descricao TEXT)''')
 
-# --- ATUALIZAÇÃO DO BANCO (MIGRAÇÕES) ---
-# Adiciona as colunas 'conta' e 'status' se elas ainda não existirem no seu banco antigo!
+# --- ATUALIZAÇÃO DO BANCO (MIGRAÇÕES AUTOMÁTICAS) ---
 def check_and_add_column(table, column, col_type, default_val):
     c.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' and column_name='{column}'")
     if not c.fetchone():
@@ -42,6 +41,8 @@ def check_and_add_column(table, column, col_type, default_val):
 
 check_and_add_column('transacoes', 'conta', 'VARCHAR(255)', 'Geral')
 check_and_add_column('transacoes', 'status', 'VARCHAR(50)', 'Pago')
+# NOVO: Coluna para Forma de Pagamento
+check_and_add_column('transacoes', 'forma_pagamento', 'VARCHAR(50)', 'Débito')
 
 # --- FUNÇÕES DE SEGURANÇA E BANCO ---
 def gerar_hash(senha):
@@ -54,21 +55,23 @@ def verificar_login(usuario, senha):
     c.execute("SELECT * FROM usuarios WHERE usuario = %s AND senha = %s", (usuario, gerar_hash(senha)))
     return c.fetchone()
 
-def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao, conta, status):
-    c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
-              (usuario, data, tipo, categoria, valor, descricao, conta, status))
+# Atualizado com forma_pagamento
+def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento):
+    c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
+              (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento))
 
 def buscar_transacoes(usuario):
-    c.execute("SELECT id, data, tipo, categoria, valor, descricao, conta, status FROM transacoes WHERE usuario = %s", (usuario,))
+    c.execute("SELECT id, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento FROM transacoes WHERE usuario = %s", (usuario,))
     dados = c.fetchall()
-    return pd.DataFrame(dados, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status'])
+    return pd.DataFrame(dados, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
 
 def deletar_transacao(id_transacao):
     c.execute("DELETE FROM transacoes WHERE id = %s", (id_transacao,))
 
-def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, conta, status):
-    c.execute("UPDATE transacoes SET data=%s, tipo=%s, categoria=%s, valor=%s, descricao=%s, conta=%s, status=%s WHERE id=%s", 
-              (data, tipo, categoria, valor, descricao, conta, status, id_transacao))
+# Atualizado com forma_pagamento
+def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento):
+    c.execute("UPDATE transacoes SET data=%s, tipo=%s, categoria=%s, valor=%s, descricao=%s, conta=%s, status=%s, forma_pagamento=%s WHERE id=%s", 
+              (data, tipo, categoria, valor, descricao, conta, status, forma_pagamento, id_transacao))
 
 def salvar_meta(usuario, categoria, limite):
     c.execute("INSERT INTO metas (usuario, categoria, limite) VALUES (%s, %s, %s) ON CONFLICT (usuario, categoria) DO UPDATE SET limite = EXCLUDED.limite", (usuario, categoria, limite))
@@ -77,7 +80,6 @@ def buscar_metas(usuario):
     c.execute("SELECT categoria, limite FROM metas WHERE usuario = %s", (usuario,))
     return dict(c.fetchall())
 
-# Funções de Investimento
 def adicionar_investimento(usuario, data, tipo, valor, descricao):
     c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, descricao) VALUES (%s, %s, %s, %s, %s)", (usuario, data, tipo, valor, descricao))
 
@@ -89,7 +91,6 @@ def buscar_investimentos(usuario):
 def deletar_investimento(id_inv):
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
 
-# --- FUNÇÃO AUXILIAR PARA PARCELAS ---
 def add_months(sourcedate, months):
     month = sourcedate.month - 1 + months
     year = sourcedate.year + month // 12
@@ -143,7 +144,6 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
-    # --- MENU LATERAL ---
     st.sidebar.title(f"👤 Olá, {usuario}")
     if st.sidebar.button("Sair (Logout)"):
         st.session_state['logado'] = False
@@ -152,25 +152,26 @@ else:
         
     st.sidebar.markdown("---")
     
-    # NOVO: Abas no Menu Lateral para separar Lançamentos de Investimentos
     aba_lancamento, aba_investimento = st.sidebar.tabs(["💸 Lançamento", "📈 Investimento"])
     
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
         if tipo_lancamento == "Despesa":
-            # Adicionada a categoria 'Viagens'
             categoria = st.selectbox("Categoria", ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros"], key="cat_lanc")
         else:
             categoria = st.selectbox("Categoria", ["Salário", "Freelance", "Rendimento", "Outros"], key="cat_lanc")
             
         conta_lancamento = st.selectbox("Conta / Instituição", ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"], key="conta_lanc")
+        
+        # NOVO: Forma de Pagamento
+        forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"], key="forma_pag")
+        
         status_lancamento = st.selectbox("Status", ["Pago", "Pendente"], key="status_lanc")
             
         data_lancamento = st.date_input("Data", datetime.today(), format="DD/MM/YYYY", key="data_lanc")
         valor_lancamento = st.number_input("Valor (R$)", min_value=0.01, format="%.2f", key="valor_lanc")
         descricao_lancamento = st.text_input("Descrição (Ex: Uber, Salário)", key="desc_lanc")
         
-        # NOVO: Sistema de Parcelamento
         parcelas = 1
         if tipo_lancamento == "Despesa":
             eh_parcelado = st.checkbox("Compra Parcelada?", key="chk_parcela")
@@ -180,13 +181,13 @@ else:
         
         if st.button("Salvar Lançamento", type="primary", use_container_width=True):
             if parcelas == 1:
-                adicionar_transacao(usuario, str(data_lancamento), tipo_lancamento, categoria, valor_lancamento, descricao_lancamento, conta_lancamento, status_lancamento)
+                adicionar_transacao(usuario, str(data_lancamento), tipo_lancamento, categoria, valor_lancamento, descricao_lancamento, conta_lancamento, status_lancamento, forma_pagamento)
             else:
                 valor_parcela = valor_lancamento / parcelas
                 for i in range(parcelas):
                     data_parcela = add_months(data_lancamento, i)
                     desc_parcela = f"{descricao_lancamento} ({i+1}/{parcelas})"
-                    adicionar_transacao(usuario, str(data_parcela), tipo_lancamento, categoria, valor_parcela, desc_parcela, conta_lancamento, status_lancamento)
+                    adicionar_transacao(usuario, str(data_parcela), tipo_lancamento, categoria, valor_parcela, desc_parcela, conta_lancamento, status_lancamento, forma_pagamento)
             st.success("Lançamento(s) salvo(s) com sucesso!")
             st.rerun()
 
@@ -214,12 +215,8 @@ else:
     # --- CORPO DO DASHBOARD ---
     st.title("📊 Seu Dashboard Financeiro")
     
-    # NOVO: Separação em Abas Principais
     aba_visao_geral, aba_carteira = st.tabs(["💰 Fluxo de Caixa", "💼 Minha Carteira de Investimentos"])
     
-    # ----------------------------------------
-    # ABA 1: FLUXO DE CAIXA E LANÇAMENTOS
-    # ----------------------------------------
     with aba_visao_geral:
         df = buscar_transacoes(usuario)
         
@@ -228,7 +225,6 @@ else:
         else:
             df['Valor'] = df['Valor'].astype(float)
             
-            # Filtro de Meses
             df['Data_dt'] = pd.to_datetime(df['Data'])
             df['MesAno'] = df['Data_dt'].dt.strftime('%m/%Y')
             lista_meses = ["Todos os Meses"] + sorted(df['MesAno'].unique().tolist(), reverse=True)
@@ -255,14 +251,12 @@ else:
             if df_filtrado.empty:
                 st.warning("Nenhum lançamento encontrado para este período.")
             else:
-                # NOVO: Cálculos considerando Status (Pago vs Pendente)
                 entradas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 saldo_real = entradas_pagas - despesas_pagas
                 
                 contas_a_pagar = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pendente')]['Valor'].sum()
                 
-                # Exibição dos Totais (Métricas Inteligentes)
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Entradas (Recebidas)", f"R$ {entradas_pagas:,.2f}")
@@ -296,16 +290,24 @@ else:
                     
                 st.markdown("---")
                 
-                # Gráficos Expansíveis
                 df_despesas = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
                 
-                with st.expander("📊 Visão de Contas (Onde está o dinheiro?)", expanded=True):
+                # NOVO: Gráfico de Formas de Pagamento
+                with st.expander("💳 Formas de Pagamento (Pix, Débito, Crédito)", expanded=True):
+                    if not df_despesas.empty:
+                        resumo_pag = df_despesas.groupby('Forma de Pagamento')['Valor'].sum().reset_index()
+                        fig_pag = px.pie(resumo_pag, values='Valor', names='Forma de Pagamento', hole=0.4, template="plotly_dark")
+                        st.plotly_chart(fig_pag, use_container_width=True)
+                    else:
+                        st.write("Sem despesas registradas para analisar as formas de pagamento.")
+
+                with st.expander("📊 Visão de Contas (Bancos)", expanded=False):
                     resumo_contas = df_filtrado.groupby(['Conta', 'Tipo'])['Valor'].sum().reset_index()
                     fig_contas = px.bar(resumo_contas, x='Conta', y='Valor', color='Tipo', barmode='group', template="plotly_dark",
                                         color_discrete_map={'Entrada': '#00CC96', 'Despesa': '#EF553B'}, text_auto='.2f')
                     st.plotly_chart(fig_contas, use_container_width=True)
 
-                with st.expander("📉 Visão de Despesas", expanded=False):
+                with st.expander("📉 Visão de Despesas por Categoria", expanded=False):
                     col_graf_d1, col_graf_d2 = st.columns(2)
                     with col_graf_d1:
                         if not df_despesas.empty:
@@ -340,6 +342,7 @@ else:
                         "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]),
                         "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f", min_value=0.0),
                         "Conta": st.column_config.SelectboxColumn("Conta", options=["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"]),
+                        "Forma de Pagamento": st.column_config.SelectboxColumn("Forma de Pagamento", options=["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]),
                         "Status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                     }
                 )
@@ -361,14 +364,11 @@ else:
                                 for col, novo_valor in alteracoes.items():
                                     linha_original[col] = novo_valor
                                 valor_corrigido = float(linha_original["Valor"])
-                                atualizar_transacao(id_editar, str(linha_original["Data"]), linha_original["Tipo"], linha_original["Categoria"], valor_corrigido, linha_original["Descrição"], linha_original["Conta"], linha_original["Status"])
+                                atualizar_transacao(id_editar, str(linha_original["Data"]), linha_original["Tipo"], linha_original["Categoria"], valor_corrigido, linha_original["Descrição"], linha_original["Conta"], linha_original["Status"], linha_original["Forma de Pagamento"])
                                 
                             st.success("Tabela atualizada com sucesso no Banco de Dados!")
                             st.rerun()
 
-    # ----------------------------------------
-    # ABA 2: CARTEIRA DE INVESTIMENTOS
-    # ----------------------------------------
     with aba_carteira:
         st.subheader("💼 Meu Patrimônio Acumulado")
         df_inv = buscar_investimentos(usuario)
