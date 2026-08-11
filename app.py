@@ -164,7 +164,7 @@ else:
         conta_lancamento = st.selectbox("Conta / Instituição", ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"], key="conta_lanc")
         
         # NOVO: Forma de Pagamento
-        forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"], key="forma_pag")
+        forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Débito", "Crédito"], key="forma_pag")
         
         status_lancamento = st.selectbox("Status", ["Pago", "Pendente"], key="status_lanc")
             
