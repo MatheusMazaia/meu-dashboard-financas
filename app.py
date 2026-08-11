@@ -342,7 +342,7 @@ else:
                         "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]),
                         "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f", min_value=0.0),
                         "Conta": st.column_config.SelectboxColumn("Conta", options=["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"]),
-                        "Forma de Pagamento": st.column_config.SelectboxColumn("Forma de Pagamento", options=["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]),
+                        "Forma de Pagamento": st.column_config.SelectboxColumn("Forma de Pagamento", options=["Pix", "Débito", "Crédito"]),
                         "Status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                     }
                 )
