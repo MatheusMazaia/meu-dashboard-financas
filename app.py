@@ -8,7 +8,7 @@ from datetime import datetime
 import calendar
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Meu Dashboard", layout="wide")
+st.set_page_config(page_title="Maza Finance", layout="wide")
 
 # --- CONEXÃO COM BANCO DE DADOS (PostgreSQL / Neon) ---
 @st.cache_resource(ttl=300)
