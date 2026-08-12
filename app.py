@@ -106,7 +106,7 @@ if 'usuario_atual' not in st.session_state:
 
 # --- TELA DE LOGIN / CADASTRO ---
 if not st.session_state['logado']:
-    st.title("🔒 Bem-vindo ao Sistema Financeiro")
+    st.title("Bem-vindo ao Maza Finance")
     aba_login, aba_cadastro = st.tabs(["Fazer Login", "Criar Conta"])
     
     with aba_login:
@@ -215,7 +215,7 @@ else:
     # --- CORPO DO DASHBOARD ---
     st.title("📊 Seu Dashboard Financeiro")
     
-    aba_visao_geral, aba_carteira = st.tabs(["💰 Fluxo de Caixa", "💼 Minha Carteira de Investimentos"])
+    aba_visao_geral, aba_carteira = st.tabs(["💰 Fluxo de Caixa", "💼 Meus Investimentos"])
     
     with aba_visao_geral:
         df = buscar_transacoes(usuario)
