@@ -161,7 +161,7 @@ else:
         else:
             categoria = st.selectbox("Categoria", ["Salário", "Freelance", "Rendimento", "Outros"], key="cat_lanc")
             
-        conta_lancamento = st.selectbox("Conta / Instituição", ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"], key="conta_lanc")
+        conta_lancamento = st.selectbox("Conta / Instituição", ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Outra"], key="conta_lanc")
         
         # NOVO: Forma de Pagamento
         forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Débito", "Crédito"], key="forma_pag")
