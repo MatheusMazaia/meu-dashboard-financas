@@ -33,7 +33,7 @@ except (psycopg2.OperationalError, psycopg2.InterfaceError):
 # Configuração da IA Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_ia = genai.GenerativeModel('gemini-1.5-flash')
+    modelo_ia = genai.GenerativeModel('gemini-pro')
 except Exception as e:
     modelo_ia = None
 
