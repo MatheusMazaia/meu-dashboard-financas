@@ -136,36 +136,47 @@ if 'usuario_atual' not in st.session_state: st.session_state['usuario_atual'] = 
 
 # --- TELA DE LOGIN / CADASTRO ---
 if not st.session_state['logado']:
-    st.title("🔒 Bem-vindo ao Maza Finance")
+    st.title("🔒 Bem-vindo ao Mazaia Finance")
     aba_login, aba_cadastro = st.tabs(["Fazer Login", "Criar Conta"])
     
     with aba_login:
         st.subheader("Acesso")
-        usuario_login = st.text_input("Utilizador", key="login_user")
-        senha_login = st.text_input("Palavra-passe", type="password", key="login_pass")
-        if st.button("Entrar"):
-            user_limpo = usuario_login.strip().lower()
-            if verificar_login(user_limpo, senha_login):
-                st.session_state['logado'] = True
-                st.session_state['usuario_atual'] = user_limpo
-                st.rerun()
-            else: st.error("Credenciais incorretas!")
+        # Criamos um 'form' para que a tecla ENTER funcione automaticamente
+        with st.form("form_login"):
+            usuario_login = st.text_input("Utilizador", key="login_user")
+            senha_login = st.text_input("Palavra-passe", type="password", key="login_pass")
+            botao_entrar = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+            
+            if botao_entrar:
+                user_limpo = usuario_login.strip().lower()
+                if verificar_login(user_limpo, senha_login):
+                    st.session_state['logado'] = True
+                    st.session_state['usuario_atual'] = user_limpo
+                    st.rerun()
+                else: 
+                    st.error("Credenciais incorretas!")
                 
     with aba_cadastro:
         st.subheader("Nova Conta")
-        novo_usuario = st.text_input("Novo Utilizador")
-        nova_senha = st.text_input("Nova Palavra-passe", type="password")
-        if st.button("Registar"):
-            novo_user_limpo = novo_usuario.strip().lower()
-            if novo_user_limpo == "" or nova_senha == "": st.warning("Preencha todos os campos.")
-            else:
-                try:
-                    adicionar_usuario(novo_user_limpo, nova_senha)
-                    st.session_state['logado'] = True
-                    st.session_state['usuario_atual'] = novo_user_limpo
-                    st.success("Conta criada! A carregar...")
-                    st.rerun()
-                except IntegrityError: st.error("Utilizador já existe.")
+        # Aplicamos a mesma lógica de form para o registo
+        with st.form("form_cadastro"):
+            novo_usuario = st.text_input("Novo Utilizador")
+            nova_senha = st.text_input("Nova Palavra-passe", type="password")
+            botao_registar = st.form_submit_button("Registar", type="primary", use_container_width=True)
+            
+            if botao_registar:
+                novo_user_limpo = novo_usuario.strip().lower()
+                if novo_user_limpo == "" or nova_senha == "": 
+                    st.warning("Preencha todos os campos.")
+                else:
+                    try:
+                        adicionar_usuario(novo_user_limpo, nova_senha)
+                        st.session_state['logado'] = True
+                        st.session_state['usuario_atual'] = novo_user_limpo
+                        st.success("Conta criada! A carregar...")
+                        st.rerun()
+                    except IntegrityError: 
+                        st.error("Utilizador já existe.")
 
 # --- TELA PRINCIPAL (DASHBOARD) ---
 else:
