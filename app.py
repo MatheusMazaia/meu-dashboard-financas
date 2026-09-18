@@ -31,11 +31,26 @@ except (psycopg2.OperationalError, psycopg2.InterfaceError):
     c = conn.cursor()
 
 # Configuração da IA Gemini
+erro_ia = ""
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_ia = genai.GenerativeModel('gemini-pro')
+    
+    # 1. Pergunta à Google quais são os modelos válidos na sua conta
+    modelos_validos = []
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            modelos_validos.append(m.name)
+            
+    # 2. Escolhe automaticamente o primeiro modelo disponível
+    if modelos_validos:
+        modelo_ia = genai.GenerativeModel(modelos_validos[0])
+    else:
+        modelo_ia = None
+        erro_ia = "Nenhum modelo de geração de texto está disponível nesta chave."
+        
 except Exception as e:
     modelo_ia = None
+    erro_ia = str(e)
 
 # --- CRIAÇÃO DE TABELAS E MIGRAÇÕES ---
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario VARCHAR(255) PRIMARY KEY, senha VARCHAR(255))''')
