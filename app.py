@@ -11,7 +11,7 @@ import google.generativeai as genai
 import json
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Mazaia Finance", layout="wide")
+st.set_page_config(page_title="Maza Finance", layout="wide")
 
 # --- CONEXÃO COM BANCO DE DADOS E IA ---
 @st.cache_resource(ttl=300)
@@ -136,7 +136,7 @@ if 'usuario_atual' not in st.session_state: st.session_state['usuario_atual'] = 
 
 # --- TELA DE LOGIN / CADASTRO ---
 if not st.session_state['logado']:
-    st.title("🔒 Bem-vindo ao Mazaia Finance")
+    st.title("🔒 Bem-vindo ao Maza Finance")
     aba_login, aba_cadastro = st.tabs(["Fazer Login", "Criar Conta"])
     
     with aba_login:
@@ -246,7 +246,7 @@ else:
             st.rerun()
 
     # --- CORPO DO DASHBOARD ---
-    st.title("📊 Mazaia Finance")
+    st.title("📊 Maza Finance")
     aba_visao_geral, aba_modulo_va, aba_carteira, aba_saude = st.tabs(["💰 Fluxo de Caixa", "🍔 Vale Alimentação", "💼 Investimentos", "🏆 Saúde Financeira"])
     
     with aba_visao_geral:
