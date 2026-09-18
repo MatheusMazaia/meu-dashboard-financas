@@ -188,11 +188,21 @@ else:
                         texto_json = resposta.text.replace('```json', '').replace('```', '').strip()
                         dados = json.loads(texto_json)
                         
+                        # Extração segura: se a IA não encontrar o dado na frase, assume um valor padrão
+                        tipo = dados.get('tipo', 'Despesa')
+                        categoria = dados.get('categoria', 'Outros')
+                        valor = float(dados.get('valor', 0.0))
+                        descricao = dados.get('descricao', texto_ia)
+                        conta = dados.get('conta', 'Outra') # Se não disser o banco, regista como "Outra"
+                        forma_pagamento = dados.get('forma_pagamento', 'Dinheiro')
+                        status = dados.get('status', 'Pago')
+                        
                         data_hoje = str(datetime.today().date())
-                        adicionar_transacao(usuario, data_hoje, dados['tipo'], dados['categoria'], float(dados['valor']), dados['descricao'], dados['conta'], dados['status'], dados['forma_pagamento'])
-                        st.success(f"✅ Registado: {dados['descricao']} - R$ {dados['valor']}")
+                        adicionar_transacao(usuario, data_hoje, tipo, categoria, valor, descricao, conta, status, forma_pagamento)
+                        st.success(f"✅ Registado: {descricao} - R$ {valor:.2f}")
                     except Exception as e:
-                        st.error("❌ Não consegui interpretar. Tente ser mais específico.")
+                        # Agora o erro vai mostrar exatamente o que falhou para podermos diagnosticar
+                        st.error(f"❌ Não consegui interpretar. Erro técnico: {e}")
 
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
