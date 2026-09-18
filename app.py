@@ -136,7 +136,7 @@ if 'usuario_atual' not in st.session_state: st.session_state['usuario_atual'] = 
 
 # --- TELA DE LOGIN / CADASTRO ---
 if not st.session_state['logado']:
-    st.title("🔒 Bem-vindo ao Mazaia Finance")
+    st.title("🔒 Bem-vindo ao Maza Finance")
     aba_login, aba_cadastro = st.tabs(["Fazer Login", "Criar Conta"])
     
     with aba_login:
