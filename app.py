@@ -344,12 +344,34 @@ else:
             df_s['MesAno'] = pd.to_datetime(df_s['Data']).dt.strftime('%m/%Y')
             df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", sorted(df_s['MesAno'].unique().tolist(), reverse=True))]
             e, d = df_mes[df_mes['Tipo'] == 'Entrada']['Valor'].astype(float).sum(), df_mes[df_mes['Tipo'] == 'Despesa']['Valor'].astype(float).sum()
+            
+            # Cálculo da pontuação
             sc = max(0, min(100, 50 + (30 if d <= e else -30) + (20 if (e - d) >= (e * 0.20) else 0) if e > 0 else 0))
             
-            c1, c2 = st.columns([1, 1])
-            with c1: st.plotly_chart(go.Figure(go.Indicator(mode="gauge+number", value=sc, gauge={'axis': {'range': [None, 100]}, 'steps': [{'range': [0, 40], 'color': "#EF553B"}, {'range': [40, 70], 'color': "#FFA15A"}, {'range': [70, 100], 'color': "#00CC96"}]})).update_layout(template="plotly_dark", height=300), use_container_width=True)
-            with c2:
-                if e == 0: st.warning("Adicione Entradas.")
-                elif sc >= 70: st.success("✅ Excelente!")
-                elif sc >= 40: st.warning("⚠️ No limite.")
-                else: st.error("🚨 Crítico.")
+            # Colocamos a mensagem de status no topo para não ser esmagada
+            if e == 0: st.warning("Adicione Entradas para calcular a saúde.")
+            elif sc >= 70: st.success("✅ Saúde Financeira Excelente!")
+            elif sc >= 40: st.warning("⚠️ Saúde no limite. Atenção aos gastos.")
+            else: st.error("🚨 Estado Crítico. Reduza as despesas!")
+            
+            # Gráfico com margens ajustadas para não cortar em ecrãs pequenos
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number", 
+                value=sc, 
+                gauge={
+                    'axis': {'range': [None, 100]}, 
+                    'steps': [
+                        {'range': [0, 40], 'color': "#EF553B"}, 
+                        {'range': [40, 70], 'color': "#FFA15A"}, 
+                        {'range': [70, 100], 'color': "#00CC96"}
+                    ]
+                }
+            ))
+            
+            fig.update_layout(
+                template="plotly_dark", 
+                height=350,
+                margin=dict(l=20, r=20, t=30, b=20) # Proteção contra cortes laterais
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
