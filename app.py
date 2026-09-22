@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import calendar
 import google.generativeai as genai
 import json
+from streamlit_mic_recorder import mic_recorder
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Maza Finance", layout="wide")
@@ -193,25 +194,64 @@ else:
     aba_ia, aba_lancamento, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🍔 VA", "📈 Investir"])
     
     with aba_ia:
-        st.markdown("💬 **Assistente Inteligente**")
-        st.info("Ex: 'Gastei 45 de uber hoje no crédito'")
+        st.subheader("🤖 Assistente Inteligente")
+        st.info("Digite a transação ou grave um áudio (Ex: 'Gastei 50 no mercado no débito')")
         
-        texto_ia = st.chat_input("Digite a transação aqui...")
-        if texto_ia:
-            if modelo_ia is None:
-                st.error(f"⚠️ Erro técnico ao ligar a IA: {erro_ia}")
-            else:
-                with st.spinner("Processando..."):
-                    prompt_sistema = f"""És um assistente financeiro. Extrai APENAS um objeto JSON válido.
-                    Chaves: "tipo": (Despesa/Entrada), "categoria": (Alimentação/Transporte/Moradia/etc), "valor": (float), "descricao", "conta": (Nubank/Itaú/Outra), "forma_pagamento": (Pix/Crédito/Débito), "status": (Pago/Pendente).
-                    Frase: "{texto_ia}" """
-                    try:
-                        resposta = modelo_ia.generate_content(prompt_sistema)
-                        dados = json.loads(resposta.text.replace('```json', '').replace('```', '').strip())
-                        adicionar_transacao(usuario, str(datetime.today().date()), dados.get('tipo','Despesa'), dados.get('categoria','Outros'), float(dados.get('valor',0)), dados.get('descricao',texto_ia), dados.get('conta','Outra'), dados.get('status','Pago'), dados.get('forma_pagamento','Dinheiro'))
-                        st.success(f"✅ Registado: {dados.get('descricao',texto_ia)} - R$ {dados.get('valor',0):.2f}")
-                    except Exception as e:
-                        st.error(f"❌ Não consegui interpretar. Erro técnico: {e}")
+        # Colunas para alinhar o campo de texto e o microfone lado a lado
+        col_texto, col_mic = st.columns([4, 1])
+        
+        with col_texto:
+            texto_usuario = st.text_input("Digite a transação aqui...", key="input_texto_ia")
+            
+        with col_mic:
+            st.write("") # Pequeno espaçamento para alinhar com o input de texto
+            # O gravador captura a voz e transforma num ficheiro WAV
+            audio = mic_recorder(
+                start_prompt="🎤 Gravar",
+                stop_prompt="⏹️ Parar",
+                key='gravador_ia',
+                format='wav' 
+            )
+        
+        # --- LÓGICA DE PROCESSAMENTO ---
+        
+        # 1. Se o usuário digitou um texto
+        if texto_usuario:
+            with st.spinner("A processar comando de texto..."):
+                # Aqui você chama a sua função atual que já processa o texto e envia pro Neon
+                st.write(f"Recebido via texto: {texto_usuario}")
+                # Exemplo: processar_transacao(texto_usuario)
+                
+        # 2. Se o usuário gravou um áudio
+        elif audio:
+            with st.spinner("A ouvir e processar o seu áudio..."):
+                try:
+                    # Extraímos os bytes do ficheiro de áudio gravado
+                    audio_bytes = audio['bytes']
+                    
+                    # Certifique-se de usar o gemini-1.5-flash ou pro, pois suportam áudio
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    
+                    # O seu prompt principal de finanças
+                    prompt_sistema = """
+                    Você é um assistente financeiro. Ouça o áudio do usuário e extraia os dados da transação.
+                    Devolva APENAS um JSON no seguinte formato, sem formatação markdown:
+                    {"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Cartão de Crédito"}
+                    Se não conseguir entender, devolva {"erro": "Não entendi o áudio"}
+                    """
+                    
+                    # A magia acontece aqui: enviamos o texto E os bytes do áudio juntos!
+                    resposta = model.generate_content([
+                        prompt_sistema,
+                        {"mime_type": "audio/wav", "data": audio_bytes}
+                    ])
+                    
+                    # Aqui você pega a resposta em JSON e manda para a sua função de salvar no banco de dados
+                    st.success("Áudio processado com sucesso!")
+                    st.json(resposta.text) # Mostra o resultado na tela para você validar
+                    
+                except Exception as e:
+                    st.error(f"Ocorreu um erro ao processar o áudio: {e}")
 
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
