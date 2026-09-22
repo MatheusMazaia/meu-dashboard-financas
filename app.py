@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 import calendar
 import google.generativeai as genai
 import json
-from streamlit_mic_recorder import mic_recorder
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Maza Finance", layout="wide")
