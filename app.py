@@ -200,7 +200,7 @@ else:
             if texto_usuario:
                 with st.spinner("A pensar..."):
                     try:
-                        # Voltamos ao modelo super estável focado em texto
+                        # O modelo que já provámos que funciona na perfeição
                         model = genai.GenerativeModel('gemini-3.6-flash')
                         
                         prompt_sistema = f'''
@@ -210,10 +210,34 @@ else:
                         Texto do usuário: {texto_usuario}
                         '''
                         resposta = model.generate_content(prompt_sistema)
-                        st.success("Processado com sucesso!")
-                        st.json(resposta.text) # Pronto para ser ligado à função de gravar na base de dados
+                        
+                        # 1. Limpa qualquer formatação extra que a IA possa adicionar (como as crases ```json)
+                        texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
+                        
+                        # 2. Transforma o texto num dicionário compreendido pelo Python
+                        dados_ia = json.loads(texto_limpo)
+                        
+                        # 3. Prepara a data de hoje automaticamente
+                        data_hoje = str(datetime.today().date())
+                        
+                        # 4. Envia tudo para a sua base de dados!
+                        adicionar_transacao(
+                            usuario=usuario,
+                            data=data_hoje,
+                            tipo=dados_ia.get("tipo", "Despesa"),
+                            categoria=dados_ia.get("categoria", "Outros"),
+                            valor=float(dados_ia.get("valor", 0.0)),
+                            descricao=dados_ia.get("descricao", "Lançamento Inteligente"),
+                            conta="Geral", # Conta padrão
+                            status="Pago",
+                            forma_pagamento=dados_ia.get("metodo", "Débito")
+                        )
+                        
+                        st.success("Lançamento guardado e enviado para a tabela!")
+                        st.rerun() # Atualiza a página instantaneamente para ver o extrato
+                        
                     except Exception as e:
-                        st.error(f"Erro na IA: {e}")
+                        st.error(f"Erro ao processar e guardar: {e}")
 
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
