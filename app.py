@@ -34,7 +34,7 @@ except (psycopg2.OperationalError, psycopg2.InterfaceError):
 erro_ia = ""
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_ia = genai.GenerativeModel('gemini-2.5-flash')
+    modelo_ia = genai.GenerativeModel('gemini-3.6-flash')
 except Exception as e:
     modelo_ia = None
     erro_ia = str(e)
@@ -201,7 +201,7 @@ else:
                 with st.spinner("A pensar..."):
                     try:
                         # Voltamos ao modelo super estável focado em texto
-                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        model = genai.GenerativeModel('gemini-3.6-flash')
                         
                         prompt_sistema = f'''
                         Você é um assistente financeiro. Extraia os dados da transação.
