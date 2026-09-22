@@ -35,7 +35,7 @@ except (psycopg2.OperationalError, psycopg2.InterfaceError):
 erro_ia = ""
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_ia = genai.GenerativeModel('gemini-1.5-flash-latest')
+    modelo_ia = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     modelo_ia = None
     erro_ia = str(e)
@@ -207,8 +207,8 @@ else:
             st.write("") # Pequeno espaçamento para alinhar com o input de texto
             # O gravador captura a voz e transforma num ficheiro WAV
             audio = mic_recorder(
-                start_prompt="🎤 Gravar",
-                stop_prompt="⏹️ Parar",
+                start_prompt="🎤",
+                stop_prompt="⏹️",
                 key='gravador_ia',
                 format='wav' 
             )
@@ -230,7 +230,7 @@ else:
                     audio_bytes = audio['bytes']
                     
                     # Certifique-se de usar o gemini-1.5-flash ou pro, pois suportam áudio
-                    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                    model = genai.GenerativeModel('gemini-1.5-flash')
                     
                     # O seu prompt principal de finanças
                     prompt_sistema = """
