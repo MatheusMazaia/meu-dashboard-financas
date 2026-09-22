@@ -141,7 +141,6 @@ if not st.session_state['logado']:
     
     with aba_login:
         st.subheader("Acesso")
-        # Criamos um 'form' para que a tecla ENTER funcione automaticamente
         with st.form("form_login"):
             usuario_login = st.text_input("Utilizador", key="login_user")
             senha_login = st.text_input("Palavra-passe", type="password", key="login_pass")
@@ -158,7 +157,6 @@ if not st.session_state['logado']:
                 
     with aba_cadastro:
         st.subheader("Nova Conta")
-        # Aplicamos a mesma lógica de form para o registo
         with st.form("form_cadastro"):
             novo_usuario = st.text_input("Novo Utilizador")
             nova_senha = st.text_input("Nova Palavra-passe", type="password")
@@ -200,7 +198,7 @@ else:
             if texto_usuario:
                 with st.spinner("A pensar..."):
                     try:
-                        # O modelo que já provámos que funciona na perfeição
+                        # O modelo que funciona na perfeição
                         model = genai.GenerativeModel('gemini-3.6-flash')
                         
                         prompt_sistema = f'''
@@ -211,16 +209,13 @@ else:
                         '''
                         resposta = model.generate_content(prompt_sistema)
                         
-                        # 1. Limpa qualquer formatação extra que a IA possa adicionar (como as crases ```json)
+                        # Limpa formatação extra e transforma em dicionário
                         texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
-                        
-                        # 2. Transforma o texto num dicionário compreendido pelo Python
                         dados_ia = json.loads(texto_limpo)
                         
-                        # 3. Prepara a data de hoje automaticamente
+                        # Prepara a data de hoje e envia para a base de dados
                         data_hoje = str(datetime.today().date())
                         
-                        # 4. Envia tudo para a sua base de dados!
                         adicionar_transacao(
                             usuario=usuario,
                             data=data_hoje,
@@ -228,13 +223,13 @@ else:
                             categoria=dados_ia.get("categoria", "Outros"),
                             valor=float(dados_ia.get("valor", 0.0)),
                             descricao=dados_ia.get("descricao", "Lançamento Inteligente"),
-                            conta="Geral", # Conta padrão
+                            conta="Geral", 
                             status="Pago",
                             forma_pagamento=dados_ia.get("metodo", "Débito")
                         )
                         
                         st.success("Lançamento guardado e enviado para a tabela!")
-                        st.rerun() # Atualiza a página instantaneamente para ver o extrato
+                        st.rerun() 
                         
                     except Exception as e:
                         st.error(f"Erro ao processar e guardar: {e}")
@@ -333,6 +328,52 @@ else:
                 df_edit['Data'] = pd.to_datetime(df_edit['Data']).dt.date
                 st.data_editor(df_edit.drop(columns=['Data_dt', 'MesAno', 'Data_Real'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
 
+                # --- NOVO BLOCO: EDITAR E EXCLUIR ---
+                st.markdown("---")
+                with st.expander("✏️ Gerir Lançamentos (Editar ou Excluir)", expanded=False):
+                    opcoes = df_filtrado['ID'].astype(str) + " - " + df_filtrado['Descrição'] + " (R$ " + df_filtrado['Valor'].astype(str) + ")"
+                    escolha = st.selectbox("Selecione o Lançamento pelo ID ou Nome:", opcoes.tolist())
+                    
+                    if escolha:
+                        id_selecionado = int(escolha.split(" - ")[0])
+                        linha = df_filtrado[df_filtrado['ID'] == id_selecionado].iloc[0]
+                        
+                        aba_editar, aba_excluir = st.tabs(["✏️ Atualizar Dados", "🗑️ Apagar Registo"])
+                        
+                        with aba_editar:
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                n_tipo = st.selectbox("Tipo", ["Despesa", "Entrada"], index=0 if linha['Tipo']=="Despesa" else 1, key=f"tipo_{id_selecionado}")
+                                
+                                ops_cat = ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]
+                                n_cat = st.selectbox("Categoria", ops_cat, index=ops_cat.index(linha['Categoria']) if linha['Categoria'] in ops_cat else 10, key=f"cat_{id_selecionado}")
+                                
+                                n_valor = st.number_input("Valor (R$)", min_value=0.01, value=float(linha['Valor']), key=f"val_{id_selecionado}")
+                                n_data = st.date_input("Data", pd.to_datetime(linha['Data']).date(), key=f"data_{id_selecionado}")
+                                
+                            with c2:
+                                n_desc = st.text_input("Descrição", value=linha['Descrição'], key=f"desc_{id_selecionado}")
+                                
+                                ops_conta = ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra", "Geral"]
+                                n_conta = st.selectbox("Conta", ops_conta, index=ops_conta.index(linha['Conta']) if linha['Conta'] in ops_conta else 9, key=f"conta_{id_selecionado}")
+                                
+                                n_status = st.selectbox("Status", ["Pago", "Pendente"], index=0 if linha['Status']=="Pago" else 1, key=f"status_{id_selecionado}")
+                                
+                                ops_forma = ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]
+                                n_forma = st.selectbox("Forma de Pagamento", ops_forma, index=ops_forma.index(linha['Forma de Pagamento']) if linha['Forma de Pagamento'] in ops_forma else 0, key=f"forma_{id_selecionado}")
+                                
+                            if st.button("💾 Guardar Alterações", type="primary", use_container_width=True, key=f"btn_salvar_{id_selecionado}"):
+                                atualizar_transacao(id_selecionado, str(n_data), n_tipo, n_cat, n_valor, n_desc, n_conta, n_status, n_forma)
+                                st.success("Atualizado com sucesso!")
+                                st.rerun()
+                                
+                        with aba_excluir:
+                            st.warning(f"Tem a certeza que quer apagar permanentemente **{linha['Descrição']}** (R$ {linha['Valor']})?")
+                            if st.button("Sim, Excluir Lançamento", type="primary", use_container_width=True, key=f"btn_excluir_{id_selecionado}"):
+                                deletar_transacao(id_selecionado)
+                                st.error("Lançamento apagado!")
+                                st.rerun()
+
     with aba_modulo_va:
         st.subheader("🍔 Vale Alimentação")
         s_va, df_va = buscar_config_va(usuario), buscar_transacoes_va(usuario)
@@ -374,13 +415,11 @@ else:
             # Cálculo da pontuação
             sc = max(0, min(100, 50 + (30 if d <= e else -30) + (20 if (e - d) >= (e * 0.20) else 0) if e > 0 else 0))
             
-            # Colocamos a mensagem de status no topo para não ser esmagada
             if e == 0: st.warning("Adicione Entradas para calcular a saúde.")
             elif sc >= 70: st.success("✅ Saúde Financeira Excelente!")
             elif sc >= 40: st.warning("⚠️ Saúde no limite. Atenção aos gastos.")
             else: st.error("🚨 Estado Crítico. Reduza as despesas!")
             
-            # Gráfico com margens ajustadas para não cortar em ecrãs pequenos
             fig = go.Figure(go.Indicator(
                 mode="gauge+number", 
                 value=sc, 
@@ -397,7 +436,7 @@ else:
             fig.update_layout(
                 template="plotly_dark", 
                 height=350,
-                margin=dict(l=20, r=20, t=30, b=20) # Proteção contra cortes laterais
+                margin=dict(l=20, r=20, t=30, b=20) 
             )
             
             st.plotly_chart(fig, use_container_width=True)
