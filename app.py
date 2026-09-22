@@ -35,7 +35,7 @@ except (psycopg2.OperationalError, psycopg2.InterfaceError):
 erro_ia = ""
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_ia = genai.GenerativeModel('gemini-1.5-flash')
+    modelo_ia = genai.GenerativeModel('gemini-1.5-pro')
 except Exception as e:
     modelo_ia = None
     erro_ia = str(e)
@@ -230,7 +230,7 @@ else:
                     audio_bytes = audio['bytes']
                     
                     # Certifique-se de usar o gemini-1.5-flash ou pro, pois suportam áudio
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    model = genai.GenerativeModel('gemini-1.5-pro')
                     
                     # O seu prompt principal de finanças
                     prompt_sistema = """
