@@ -195,63 +195,26 @@ else:
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
-        st.info("Digite a transação ou grave um áudio (Ex: 'Gastei 50 no mercado no débito')")
+        texto_usuario = st.text_input("Digite a transação (Ex: 'Gastei 50 no mercado no crédito')")
         
-        # Colunas para alinhar o campo de texto e o microfone lado a lado
-        col_texto, col_mic = st.columns([4, 1])
-        
-        with col_texto:
-            texto_usuario = st.text_input("Digite a transação aqui...", key="input_texto_ia")
-            
-        with col_mic:
-            st.write("") # Pequeno espaçamento para alinhar com o input de texto
-            # O gravador captura a voz e transforma num ficheiro WAV
-            audio = mic_recorder(
-                start_prompt="🎤",
-                stop_prompt="⏹️",
-                key='gravador_ia',
-                format='wav' 
-            )
-        
-        # --- LÓGICA DE PROCESSAMENTO ---
-        
-        # 1. Se o usuário digitou um texto
-        if texto_usuario:
-            with st.spinner("A processar comando de texto..."):
-                # Aqui você chama a sua função atual que já processa o texto e envia pro Neon
-                st.write(f"Recebido via texto: {texto_usuario}")
-                # Exemplo: processar_transacao(texto_usuario)
-                
-        # 2. Se o usuário gravou um áudio
-        elif audio:
-            with st.spinner("A ouvir e processar o seu áudio..."):
-                try:
-                    # Extraímos os bytes do ficheiro de áudio gravado
-                    audio_bytes = audio['bytes']
-                    
-                    # Certifique-se de usar o gemini-1.5-flash ou pro, pois suportam áudio
-                    model = genai.GenerativeModel('gemini-1.5-pro')
-                    
-                    # O seu prompt principal de finanças
-                    prompt_sistema = """
-                    Você é um assistente financeiro. Ouça o áudio do usuário e extraia os dados da transação.
-                    Devolva APENAS um JSON no seguinte formato, sem formatação markdown:
-                    {"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Cartão de Crédito"}
-                    Se não conseguir entender, devolva {"erro": "Não entendi o áudio"}
-                    """
-                    
-                    # A magia acontece aqui: enviamos o texto E os bytes do áudio juntos!
-                    resposta = model.generate_content([
-                        prompt_sistema,
-                        {"mime_type": "audio/wav", "data": audio_bytes}
-                    ])
-                    
-                    # Aqui você pega a resposta em JSON e manda para a sua função de salvar no banco de dados
-                    st.success("Áudio processado com sucesso!")
-                    st.json(resposta.text) # Mostra o resultado na tela para você validar
-                    
-                except Exception as e:
-                    st.error(f"Ocorreu um erro ao processar o áudio: {e}")
+        if st.button("Processar com IA", type="primary"):
+            if texto_usuario:
+                with st.spinner("A pensar..."):
+                    try:
+                        # Voltamos ao modelo super estável focado em texto
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        prompt_sistema = f'''
+                        Você é um assistente financeiro. Extraia os dados da transação.
+                        Devolva APENAS um JSON no seguinte formato:
+                        {{"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Cartão de Crédito"}}
+                        Texto do usuário: {texto_usuario}
+                        '''
+                        resposta = model.generate_content(prompt_sistema)
+                        st.success("Processado com sucesso!")
+                        st.json(resposta.text) # Pronto para ser ligado à função de gravar na base de dados
+                    except Exception as e:
+                        st.error(f"Erro na IA: {e}")
 
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
