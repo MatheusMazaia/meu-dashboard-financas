@@ -71,7 +71,7 @@ def verificar_login(usuario, senha):
 def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento):
     c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
               (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento))
-    buscar_transacoes.clear() # Limpa a memória para atualizar o gráfico
+    buscar_transacoes.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_transacoes(usuario):
@@ -198,7 +198,6 @@ else:
             if texto_usuario:
                 with st.spinner("A pensar..."):
                     try:
-                        # O modelo que funciona na perfeição
                         model = genai.GenerativeModel('gemini-3.6-flash')
                         
                         prompt_sistema = f'''
@@ -209,11 +208,8 @@ else:
                         '''
                         resposta = model.generate_content(prompt_sistema)
                         
-                        # Limpa formatação extra e transforma em dicionário
                         texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
                         dados_ia = json.loads(texto_limpo)
-                        
-                        # Prepara a data de hoje e envia para a base de dados
                         data_hoje = str(datetime.today().date())
                         
                         adicionar_transacao(
@@ -315,6 +311,7 @@ else:
                 with c3: st.metric("Saldo Atual", f"R$ {entradas_pagas - despesas_pagas:,.2f}")
                 with c4: st.metric("⚠️ A Pagar", f"R$ {df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pendente')]['Valor'].sum():,.2f}")
                 
+                # BLOCO CORRIGIDO 1: Gráficos de Análise
                 df_desp = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
                 with st.expander("📉 Análise de Despesas", expanded=False):
                     g1, g2 = st.columns(2)
@@ -323,12 +320,73 @@ else:
                         with g1: st.plotly_chart(px.pie(res, values='Valor', names='Categoria', hole=0.5, template="plotly_dark"), use_container_width=True)
                         with g2: st.plotly_chart(px.bar(res, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark"), use_container_width=True)
                             
+                # BLOCO CORRIGIDO 2: Extrato
                 st.subheader("📋 Extrato")
                 df_edit = df_filtrado.copy()
                 df_edit['Data'] = pd.to_datetime(df_edit['Data']).dt.date
                 st.data_editor(df_edit.drop(columns=['Data_dt', 'MesAno', 'Data_Real'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
 
-                # --- NOVO BLOCO: EDITAR E EXCLUIR ---
+                # BLOCO CORRIGIDO 3: Gerador de PDF
+                st.markdown("---")
+                st.subheader("📄 Relatório Mensal em PDF")
+                st.write("Exporte o seu extrato do mês com o resumo de indicadores para arquivo ou impressão.")
+                
+                from fpdf import FPDF
+                import unicodedata
+
+                def remover_acentos(texto):
+                    return ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
+
+                try:
+                    pdf = FPDF()
+                    pdf.add_page()
+                    
+                    pdf.set_font("Arial", 'B', 16)
+                    pdf.cell(200, 10, txt="Relatorio Financeiro Mensal", ln=True, align='C')
+                    pdf.set_font("Arial", '', 12)
+                    pdf.cell(200, 10, txt=f"Mes de Referencia: {mes_selecionado} | Maza Finance", ln=True, align='C')
+                    pdf.ln(5)
+
+                    pdf.set_font("Arial", 'B', 12)
+                    pdf.cell(200, 8, txt=f"Total de Entradas: R$ {entradas_pagas:.2f}", ln=True)
+                    pdf.cell(200, 8, txt=f"Total de Despesas: R$ {despesas_pagas:.2f}", ln=True)
+                    pdf.cell(200, 8, txt=f"Saldo Liquido: R$ {entradas_pagas - despesas_pagas:.2f}", ln=True)
+                    pdf.ln(5)
+
+                    pdf.set_font("Arial", 'B', 10)
+                    pdf.cell(22, 8, "Data", border=1, align='C')
+                    pdf.cell(22, 8, "Tipo", border=1, align='C')
+                    pdf.cell(40, 8, "Categoria", border=1, align='C')
+                    pdf.cell(25, 8, "Valor", border=1, align='C')
+                    pdf.cell(55, 8, "Descricao", border=1, align='C')
+                    pdf.cell(26, 8, "Conta", border=1, align='C')
+                    pdf.ln()
+
+                    pdf.set_font("Arial", '', 8)
+                    for idx, row in df_filtrado.iterrows():
+                        data_f = pd.to_datetime(row['Data']).strftime('%d/%m/%Y')
+                        pdf.cell(22, 8, data_f, border=1, align='C')
+                        pdf.cell(22, 8, remover_acentos(row['Tipo']), border=1, align='C')
+                        pdf.cell(40, 8, remover_acentos(row['Categoria'])[:20], border=1, align='C')
+                        pdf.cell(25, 8, f"R$ {row['Valor']:.2f}", border=1, align='C')
+                        pdf.cell(55, 8, remover_acentos(row['Descrição'])[:35], border=1, align='L')
+                        pdf.cell(26, 8, remover_acentos(row['Conta'])[:12], border=1, align='C')
+                        pdf.ln()
+
+                    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+
+                    st.download_button(
+                        label="⬇️ Baixar Relatório Mensal",
+                        data=pdf_bytes,
+                        file_name=f"Maza_Finance_Relatorio_{mes_selecionado.replace('/', '_')}.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao gerar PDF: {e}")
+
+                # BLOCO CORRIGIDO 4: Gestão de Lançamentos
                 st.markdown("---")
                 with st.expander("✏️ Gerir Lançamentos (Editar ou Excluir)", expanded=False):
                     opcoes = df_filtrado['ID'].astype(str) + " - " + df_filtrado['Descrição'] + " (R$ " + df_filtrado['Valor'].astype(str) + ")"
@@ -412,7 +470,6 @@ else:
             df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", sorted(df_s['MesAno'].unique().tolist(), reverse=True))]
             e, d = df_mes[df_mes['Tipo'] == 'Entrada']['Valor'].astype(float).sum(), df_mes[df_mes['Tipo'] == 'Despesa']['Valor'].astype(float).sum()
             
-            # Cálculo da pontuação
             sc = max(0, min(100, 50 + (30 if d <= e else -30) + (20 if (e - d) >= (e * 0.20) else 0) if e > 0 else 0))
             
             if e == 0: st.warning("Adicione Entradas para calcular a saúde.")
@@ -441,11 +498,9 @@ else:
             
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- DIAGNÓSTICO IA AUTOMÁTICO COM CACHE ---
             st.markdown("---")
             st.subheader("💡 Diagnóstico com IA")
             
-            # 1. Identificar maiores gastos
             df_despesas_mes = df_mes[df_mes['Tipo'] == 'Despesa']
             if not df_despesas_mes.empty:
                 top_categorias = df_despesas_mes.groupby('Categoria')['Valor'].sum().sort_values(ascending=False).head(3).to_dict()
@@ -453,8 +508,7 @@ else:
             else:
                 detalhe_gastos = "O utilizador ainda não registou despesas neste mês."
 
-            # 2. Função com memória (Cache) para não gastar a API do Google à toa
-            @st.cache_data(ttl=3600, show_spinner=False) # Guarda o texto na memória por 1 hora
+            @st.cache_data(ttl=3600, show_spinner=False)
             def gerar_diagnostico_ia(score, entradas, despesas, top_gastos):
                 try:
                     model = genai.GenerativeModel('gemini-3.6-flash')
@@ -476,7 +530,6 @@ else:
                 except Exception as erro:
                     return f"Não foi possível carregar o diagnóstico: {erro}"
 
-            # 3. Chama a função automaticamente enquanto mostra um ícone de carregamento
             with st.spinner("A gerar a sua análise personalizada..."):
                 texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
                 st.info(texto_diagnostico)
