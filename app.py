@@ -440,3 +440,43 @@ else:
             )
             
             st.plotly_chart(fig, use_container_width=True)
+
+            # --- DIAGNÓSTICO IA AUTOMÁTICO COM CACHE ---
+            st.markdown("---")
+            st.subheader("💡 Diagnóstico com IA")
+            
+            # 1. Identificar maiores gastos
+            df_despesas_mes = df_mes[df_mes['Tipo'] == 'Despesa']
+            if not df_despesas_mes.empty:
+                top_categorias = df_despesas_mes.groupby('Categoria')['Valor'].sum().sort_values(ascending=False).head(3).to_dict()
+                detalhe_gastos = f"Os 3 maiores gastos deste mês foram: {top_categorias}"
+            else:
+                detalhe_gastos = "O utilizador ainda não registou despesas neste mês."
+
+            # 2. Função com memória (Cache) para não gastar a API do Google à toa
+            @st.cache_data(ttl=3600, show_spinner=False) # Guarda o texto na memória por 1 hora
+            def gerar_diagnostico_ia(score, entradas, despesas, top_gastos):
+                try:
+                    model = genai.GenerativeModel('gemini-3.6-flash')
+                    prompt_consultor = f'''
+                    Atue como um consultor financeiro experiente.
+                    O seu cliente tem uma pontuação de saúde financeira de {score} (escala 0-100).
+                    Neste mês: Entradas R$ {entradas:.2f} | Despesas R$ {despesas:.2f}.
+                    {top_gastos}
+                    
+                    Escreva um diagnóstico curto e amigável:
+                    1. Explique a pontuação de {score}.
+                    2. Aponte os pontos fortes.
+                    3. Dê 2 dicas de onde/como melhorar com base nas categorias onde ele mais gastou.
+                    
+                    Sem markdown exagerado, use bullet points. Fale de forma motivadora.
+                    '''
+                    resposta = model.generate_content(prompt_consultor)
+                    return resposta.text
+                except Exception as erro:
+                    return f"Não foi possível carregar o diagnóstico: {erro}"
+
+            # 3. Chama a função automaticamente enquanto mostra um ícone de carregamento
+            with st.spinner("A gerar a sua análise personalizada..."):
+                texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
+                st.info(texto_diagnostico)
