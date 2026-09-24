@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 import calendar
 import google.generativeai as genai
 import json
+from cryptography.fernet import Fernet
+import base64
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Maza Finance", layout="wide")
