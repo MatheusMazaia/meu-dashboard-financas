@@ -41,7 +41,27 @@ except Exception as e:
     modelo_ia = None
     erro_ia = str(e)
 
-# --- OTIMIZAÇÃO 1: CACHE NAS MIGRAÇÕES (Executa só 1x ao ligar o app) ---
+# --- MOTOR DE CRIPTOGRAFIA ---
+try:
+    fernet = Fernet(st.secrets["ENCRYPTION_KEY"])
+except Exception:
+    fernet = None # Segurança caso a chave falte
+
+def criptografar(texto):
+    if fernet and texto:
+        return fernet.encrypt(str(texto).encode()).decode()
+    return texto
+
+def descriptografar(texto):
+    if fernet and texto:
+        try:
+            return fernet.decrypt(str(texto).encode()).decode()
+        except Exception:
+            # Se der erro (dado antigo em texto limpo), devolve como está
+            return texto 
+    return texto
+
+# --- OTIMIZAÇÃO 1: CACHE NAS MIGRAÇÕES ---
 @st.cache_resource
 def inicializar_banco_dados():
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario VARCHAR(255) PRIMARY KEY, senha VARCHAR(255))''')
@@ -71,32 +91,51 @@ def verificar_login(usuario, senha):
 
 # --- OTIMIZAÇÃO 2: CACHE NOS DADOS E LIMPEZA AUTOMÁTICA ---
 def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento):
+    desc_segura = criptografar(descricao)
     c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-              (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento))
+              (usuario, data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento))
     buscar_transacoes.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_transacoes(usuario):
     c.execute("SELECT id, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento FROM transacoes WHERE usuario = %s", (usuario,))
-    return pd.DataFrame(c.fetchall(), columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
+    linhas = c.fetchall()
+    
+    linhas_descriptografadas = []
+    for linha in linhas:
+        linha_lista = list(linha)
+        linha_lista[5] = descriptografar(linha_lista[5]) # Descrição está no índice 5
+        linhas_descriptografadas.append(linha_lista)
+        
+    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
 
 def deletar_transacao(id_transacao): 
     c.execute("DELETE FROM transacoes WHERE id = %s", (id_transacao,))
     buscar_transacoes.clear()
 
 def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento):
+    desc_segura = criptografar(descricao)
     c.execute("UPDATE transacoes SET data=%s, tipo=%s, categoria=%s, valor=%s, descricao=%s, conta=%s, status=%s, forma_pagamento=%s WHERE id=%s", 
-              (data, tipo, categoria, valor, descricao, conta, status, forma_pagamento, id_transacao))
+              (data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento, id_transacao))
     buscar_transacoes.clear()
 
-def adicionar_investimento(usuario, data, tipo, valor, descricao): 
-    c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, descricao) VALUES (%s, %s, %s, %s, %s)", (usuario, data, tipo, valor, descricao))
+def adicionar_investimento(usuario, data, tipo, valor, descricao):
+    desc_segura = criptografar(descricao)
+    c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, descricao) VALUES (%s, %s, %s, %s, %s)", (usuario, data, tipo, valor, desc_segura))
     buscar_investimentos.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_investimentos(usuario):
     c.execute("SELECT id, data, tipo, valor, descricao FROM investimentos WHERE usuario = %s", (usuario,))
-    return pd.DataFrame(c.fetchall(), columns=['ID', 'Data', 'Tipo', 'Valor', 'Descrição'])
+    linhas = c.fetchall()
+    
+    linhas_descriptografadas = []
+    for linha in linhas:
+        linha_lista = list(linha)
+        linha_lista[4] = descriptografar(linha_lista[4]) # Descrição está no índice 4
+        linhas_descriptografadas.append(linha_lista)
+        
+    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Valor', 'Descrição'])
 
 def deletar_investimento(id_inv): 
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
@@ -112,14 +151,23 @@ def buscar_config_va(usuario):
     res = c.fetchone()
     return res[0] if res else 0.0
 
-def adicionar_transacao_va(usuario, data, valor, descricao): 
-    c.execute("INSERT INTO va_transacoes (usuario, data, valor, descricao) VALUES (%s, %s, %s, %s)", (usuario, data, valor, descricao))
+def adicionar_transacao_va(usuario, data, valor, descricao):
+    desc_segura = criptografar(descricao)
+    c.execute("INSERT INTO va_transacoes (usuario, data, valor, descricao) VALUES (%s, %s, %s, %s)", (usuario, data, valor, desc_segura))
     buscar_transacoes_va.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_transacoes_va(usuario):
     c.execute("SELECT id, data, valor, descricao FROM va_transacoes WHERE usuario = %s", (usuario,))
-    return pd.DataFrame(c.fetchall(), columns=['ID', 'Data', 'Valor', 'Descrição'])
+    linhas = c.fetchall()
+    
+    linhas_descriptografadas = []
+    for linha in linhas:
+        linha_lista = list(linha)
+        linha_lista[3] = descriptografar(linha_lista[3]) # Descrição está no índice 3
+        linhas_descriptografadas.append(linha_lista)
+        
+    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Valor', 'Descrição'])
 
 def deletar_transacao_va(id_transacao): 
     c.execute("DELETE FROM va_transacoes WHERE id = %s", (id_transacao,))
@@ -313,7 +361,6 @@ else:
                 with c3: st.metric("Saldo Atual", f"R$ {entradas_pagas - despesas_pagas:,.2f}")
                 with c4: st.metric("⚠️ A Pagar", f"R$ {df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pendente')]['Valor'].sum():,.2f}")
                 
-                # BLOCO CORRIGIDO 1: Gráficos de Análise
                 df_desp = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
                 with st.expander("📉 Análise de Despesas", expanded=False):
                     g1, g2 = st.columns(2)
@@ -322,13 +369,11 @@ else:
                         with g1: st.plotly_chart(px.pie(res, values='Valor', names='Categoria', hole=0.5, template="plotly_dark"), use_container_width=True)
                         with g2: st.plotly_chart(px.bar(res, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark"), use_container_width=True)
                             
-                # BLOCO CORRIGIDO 2: Extrato
                 st.subheader("📋 Extrato")
                 df_edit = df_filtrado.copy()
                 df_edit['Data'] = pd.to_datetime(df_edit['Data']).dt.date
                 st.data_editor(df_edit.drop(columns=['Data_dt', 'MesAno', 'Data_Real'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
 
-                # BLOCO CORRIGIDO 3: Gerador de PDF
                 st.markdown("---")
                 st.subheader("📄 Relatório Mensal em PDF")
                 st.write("Exporte o seu extrato do mês com o resumo de indicadores para arquivo ou impressão.")
@@ -388,7 +433,6 @@ else:
                 except Exception as e:
                     st.error(f"Erro ao gerar PDF: {e}")
 
-                # BLOCO CORRIGIDO 4: Gestão de Lançamentos
                 st.markdown("---")
                 with st.expander("✏️ Gerir Lançamentos (Editar ou Excluir)", expanded=False):
                     opcoes = df_filtrado['ID'].astype(str) + " - " + df_filtrado['Descrição'] + " (R$ " + df_filtrado['Valor'].astype(str) + ")"
