@@ -501,12 +501,71 @@ else:
     with aba_carteira:
         st.subheader("💼 Património")
         df_inv = buscar_investimentos(usuario)
-        if df_inv.empty: st.info("Sem investimentos.")
+        if df_inv.empty: 
+            st.info("Sem investimentos registados na sua carteira.")
         else:
-            st.metric("Total", f"R$ {df_inv['Valor'].sum():,.2f}")
+            st.metric("Total Acumulado", f"R$ {df_inv['Valor'].sum():,.2f}")
             c1, c2 = st.columns([1, 1])
-            with c1: st.plotly_chart(px.pie(df_inv.groupby('Tipo')['Valor'].sum().reset_index(), values='Valor', names='Tipo', hole=0.4, template="plotly_dark"), use_container_width=True)
-            with c2: st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
+            with c1: 
+                st.plotly_chart(px.pie(df_inv.groupby('Tipo')['Valor'].sum().reset_index(), values='Valor', names='Tipo', hole=0.4, template="plotly_dark"), use_container_width=True)
+            with c2: 
+                st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
+
+        # --- NOVO BLOCO: SIMULADOR DE INVESTIMENTOS ---
+        st.markdown("---")
+        st.subheader("🔮 Simulador de Rendimentos")
+        st.write("Projete o crescimento do seu dinheiro ao longo do tempo com a magia dos juros compostos.")
+
+        # Campos de entrada lado a lado
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            val_inicial = st.number_input("Valor Inicial (R$)", min_value=0.0, value=1000.0, step=100.0)
+        with col2:
+            aporte_mensal = st.number_input("Aporte Mensal (R$)", min_value=0.0, value=200.0, step=50.0)
+        with col3:
+            taxa_anual = st.number_input("Taxa Anual (%)", min_value=0.0, value=10.5, step=0.5, help="Ex: 10.5% ao ano (Aprox. Selic/CDI atual)")
+        with col4:
+            anos = st.number_input("Período (Anos)", min_value=1, max_value=50, value=5, step=1)
+
+        # Cálculos Matemáticos (Juros Compostos)
+        taxa_mensal = (1 + taxa_anual / 100) ** (1 / 12) - 1
+        meses = int(anos * 12)
+
+        saldo = val_inicial
+        total_investido = val_inicial
+        dados_grafico = [{'Mês': 0, 'Total Investido': total_investido, 'Saldo Projetado': saldo}]
+
+        for m in range(1, meses + 1):
+            saldo = saldo * (1 + taxa_mensal) + aporte_mensal
+            total_investido += aporte_mensal
+            dados_grafico.append({'Mês': m, 'Total Investido': total_investido, 'Saldo Projetado': saldo})
+
+        df_simulacao = pd.DataFrame(dados_grafico)
+
+        # Resultados em destaque
+        rendimento_juros = saldo - total_investido
+        st.markdown("##### Resultado da Simulação")
+        rm1, rm2, rm3 = st.columns(3)
+        with rm1: st.metric("💰 Total Investido (Do seu bolso)", f"R$ {total_investido:,.2f}")
+        with rm2: st.metric("📈 Rendimento (Só em Juros)", f"R$ {rendimento_juros:,.2f}")
+        with rm3: st.metric("🏆 Valor Final Estimado", f"R$ {saldo:,.2f}")
+
+        # Gráfico Visual da Projeção
+        fig_sim = px.area(
+            df_simulacao, 
+            x='Mês', 
+            y=['Total Investido', 'Saldo Projetado'],
+            labels={'value': 'Valor (R$)', 'variable': 'Curva'},
+            template="plotly_dark",
+            color_discrete_map={'Total Investido': '#4B5563', 'Saldo Projetado': '#00CC96'} # Cinza para o seu bolso, Verde para os juros
+        )
+        
+        fig_sim.update_layout(
+            margin=dict(l=20, r=20, t=20, b=20), 
+            hovermode="x unified",
+            legend_title_text=''
+        )
+        st.plotly_chart(fig_sim, use_container_width=True)
 
     with aba_saude:
         st.subheader("🏆 Raio-X Financeiro")
