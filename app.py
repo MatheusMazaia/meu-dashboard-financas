@@ -288,7 +288,6 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
-    # MOTOR AUTOMÁTICO DE ASSINATURAS
     verificar_e_lancar_assinaturas(usuario)
     
     st.sidebar.title(f"👤 Olá, {usuario}")
@@ -743,7 +742,11 @@ else:
                     resposta = model.generate_content(prompt_consultor)
                     return resposta.text
                 except Exception as erro:
-                    return f"Não foi possível carregar o diagnóstico: {erro}"
+                    erro_str = str(erro).lower()
+                    if "429" in erro_str or "quota" in erro_str:
+                        return "⏳ **O Consultor IA está muito requisitado no momento!**\n\nAtingimos o limite temporário de consultas rápidas da Google. Por favor, aguarde cerca de um minuto e navegue pelas outras abas antes de voltar aqui para receber o seu diagnóstico."
+                    else:
+                        return "🛠️ **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
             with st.spinner("A gerar a sua análise personalizada..."):
                 texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
