@@ -104,7 +104,16 @@ def buscar_transacoes(usuario):
     linhas_descriptografadas = []
     for linha in linhas:
         linha_lista = list(linha)
-        linha_lista[5] = descriptografar(linha_lista[5])
+        # Proteção contra dupla criptografia
+        texto_original = linha_lista[5]
+        try:
+            texto_limpo = descriptografar(texto_original)
+            if isinstance(texto_limpo, str) and texto_limpo.startswith("gAAAA"):
+                texto_limpo = descriptografar(texto_limpo)
+            linha_lista[5] = texto_limpo
+        except Exception:
+            linha_lista[5] = texto_original
+            
         linhas_descriptografadas.append(linha_lista)
     return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
 
@@ -118,7 +127,7 @@ def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, c
               (data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento, id_transacao))
     buscar_transacoes.clear()
 
-# --- NOVA FUNÇÃO: BAIXA RÁPIDA ---
+# --- FUNÇÃO: BAIXA RÁPIDA ---
 def marcar_como_paga(id_transacao):
     c.execute("UPDATE transacoes SET status='Pago' WHERE id=%s", (id_transacao,))
     buscar_transacoes.clear()
@@ -157,7 +166,10 @@ def verificar_e_lancar_assinaturas(usuario):
                 c.execute("SELECT 1 FROM log_assinaturas WHERE id_assinatura = %s AND mes_ano = %s", (id_ass, mes_ano_atual))
                 if not c.fetchone():
                     data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
-                    desc_segura = criptografar(row['Nome'] + " (Assinatura)")
+                    
+                    # Correção: String segura formatada antes de criptografar
+                    nome_seguro = str(row['Nome']) + " (Assinatura)"
+                    desc_segura = criptografar(nome_seguro)
                     
                     c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
                               (usuario, data_lanc, "Despesa", row['Categoria'], row['Valor'], desc_segura, row['Conta'], "Pendente", row['Forma de Pagamento']))
@@ -276,6 +288,7 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
+    # MOTOR AUTOMÁTICO DE ASSINATURAS
     verificar_e_lancar_assinaturas(usuario)
     
     st.sidebar.title(f"👤 Olá, {usuario}")
@@ -408,13 +421,11 @@ else:
                     with c3: 
                         if not prox.empty: st.info(f"🔵 {len(prox)} em 5 dias\nR$ {prox['Valor'].sum():.2f}")
                     
-                    # --- NOVO MENU DE BAIXA RÁPIDA NA CENTRAL ---
                     with st.expander("💸 Contas Pendentes (Clique para Dar Baixa)", expanded=True):
                         df_pendentes_ordenado = df_pendentes.sort_values(by='Data_Real')
                         for idx, row in df_pendentes_ordenado.iterrows():
                             data_f = row['Data_Real'].strftime('%d/%m/%Y')
                             
-                            # Define o ícone com base na data
                             if row['Data_Real'] < hoje: icone = "🔴"
                             elif row['Data_Real'] == hoje: icone = "🟡"
                             else: icone = "🔵"
