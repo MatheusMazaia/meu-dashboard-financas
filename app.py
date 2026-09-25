@@ -280,7 +280,7 @@ else:
     st.sidebar.markdown("---")
     
     # NOVA ABA "Fixas" NO MENU LATERAL
-    aba_ia, aba_lancamento, aba_fixas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Fixas", "🍔 VA", "📈 Investir"])
+    aba_ia, aba_lancamento, aba_assinaturas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Lançamentos", "🔄 Assinaturas", "🍔 VA", "📈 Investimentos"])
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
@@ -335,7 +335,7 @@ else:
             st.rerun()
             
     # MENU LATERAL: CADASTRO DE ASSINATURAS
-    with aba_fixas:
+    with aba_assinaturas:
         st.subheader("🔄 Nova Assinatura")
         nome_ass = st.text_input("Serviço (Ex: Netflix)")
         val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key="val_ass")
@@ -536,7 +536,7 @@ else:
         
         df_ass = buscar_assinaturas(usuario)
         if df_ass.empty:
-            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Fixas) para adicionar a Netflix, Internet, Academia, etc.")
+            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Assinaturas) para adicionar a Netflix, Internet, Academia, etc.")
         else:
             c1, c2 = st.columns([1, 2])
             with c1:
