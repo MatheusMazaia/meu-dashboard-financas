@@ -70,9 +70,10 @@ def inicializar_banco_dados():
     c.execute('''CREATE TABLE IF NOT EXISTS va_config (usuario VARCHAR(255) PRIMARY KEY, saldo REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS va_transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), valor REAL, descricao TEXT)''')
     
-    # NOVAS TABELAS PARA ASSINATURAS AUTOMÁTICAS
     c.execute('''CREATE TABLE IF NOT EXISTS assinaturas (id SERIAL PRIMARY KEY, usuario VARCHAR(255), nome VARCHAR(255), categoria VARCHAR(255), valor REAL, dia_vencimento INTEGER, conta VARCHAR(255), forma_pagamento VARCHAR(50))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS controle_assinaturas (usuario VARCHAR(255), mes_ano VARCHAR(20), PRIMARY KEY(usuario, mes_ano))''')
+    
+    # NOVA TABELA PARA CONTROLO INDIVIDUAL POR ASSINATURA
+    c.execute('''CREATE TABLE IF NOT EXISTS log_assinaturas (id_assinatura INTEGER, mes_ano VARCHAR(20), PRIMARY KEY(id_assinatura, mes_ano))''')
 
     def check_and_add_column(table, column, col_type, default_val):
         c.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' and column_name='{column}'")
@@ -137,28 +138,35 @@ def deletar_assinatura(id_ass):
 def verificar_e_lancar_assinaturas(usuario):
     hoje = datetime.today()
     mes_ano_atual = hoje.strftime('%m/%Y')
+    dia_atual = hoje.day
     
-    # O GATILHO: Verifica se as assinaturas deste mês já foram lançadas
-    c.execute("SELECT 1 FROM controle_assinaturas WHERE usuario = %s AND mes_ano = %s", (usuario, mes_ano_atual))
-    if not c.fetchone():
-        assinaturas = buscar_assinaturas(usuario)
-        if not assinaturas.empty:
-            for _, row in assinaturas.iterrows():
-                dia = int(row['Dia Venc.'])
-                ultimo_dia_mes = calendar.monthrange(hoje.year, hoje.month)[1]
-                dia_real = min(dia, ultimo_dia_mes) # Proteção (Ex: se puser dia 31 e estivermos em fevereiro)
-                data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
-                
-                # Criptografar para a base de dados
-                desc_segura = criptografar(row['Nome'] + " (Assinatura)")
-                
-                # Injeta automaticamente como pendente
-                c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                          (usuario, data_lanc, "Despesa", row['Categoria'], row['Valor'], desc_segura, row['Conta'], "Pendente", row['Forma de Pagamento']))
+    assinaturas = buscar_assinaturas(usuario)
+    if not assinaturas.empty:
+        lancou_algo = False
+        for _, row in assinaturas.iterrows():
+            id_ass = int(row['ID'])
+            dia_venc = int(row['Dia Venc.'])
+            
+            # Garante que se o dia configurado for 31 e o mês for fevereiro, ele lança no dia 28/29
+            ultimo_dia_mes = calendar.monthrange(hoje.year, hoje.month)[1]
+            dia_real = min(dia_venc, ultimo_dia_mes)
+            
+            # O GATILHO INTELIGENTE: Só lança se o dia de hoje for maior ou igual ao vencimento
+            if dia_atual >= dia_real:
+                # Verifica se a assinatura já foi lançada NESTE mês
+                c.execute("SELECT 1 FROM log_assinaturas WHERE id_assinatura = %s AND mes_ano = %s", (id_ass, mes_ano_atual))
+                if not c.fetchone():
+                    data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
+                    desc_segura = criptografar(row['Nome'] + " (Assinatura)")
+                    
+                    c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
+                              (usuario, data_lanc, "Despesa", row['Categoria'], row['Valor'], desc_segura, row['Conta'], "Pendente", row['Forma de Pagamento']))
+                    
+                    c.execute("INSERT INTO log_assinaturas (id_assinatura, mes_ano) VALUES (%s, %s)", (id_ass, mes_ano_atual))
+                    lancou_algo = True
+                    
+        if lancou_algo:
             buscar_transacoes.clear()
-        
-        # Regista na tabela de controlo para não lançar 2 vezes no mesmo mês
-        c.execute("INSERT INTO controle_assinaturas (usuario, mes_ano) VALUES (%s, %s)", (usuario, mes_ano_atual))
 
 # Resto das funções
 def adicionar_investimento(usuario, data, tipo, valor, descricao):
@@ -268,7 +276,7 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
-    # MOTOR AUTOMÁTICO DE ASSINATURAS! (Roda no milésimo de segundo que você entra)
+    # MOTOR AUTOMÁTICO DE ASSINATURAS INTELIGENTE
     verificar_e_lancar_assinaturas(usuario)
     
     st.sidebar.title(f"👤 Olá, {usuario}")
@@ -279,8 +287,7 @@ else:
         
     st.sidebar.markdown("---")
     
-    # NOVA ABA "Fixas" NO MENU LATERAL
-    aba_ia, aba_lancamento, aba_assinaturas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Lançamentos", "🔄 Assinaturas", "🍔 VA", "📈 Investimentos"])
+    aba_ia, aba_lancamento, aba_fixas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Fixas", "🍔 VA", "📈 Investir"])
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
@@ -334,10 +341,9 @@ else:
             st.success("Lançamento guardado!")
             st.rerun()
             
-    # MENU LATERAL: CADASTRO DE ASSINATURAS
-    with aba_assinaturas:
+    with aba_fixas:
         st.subheader("🔄 Nova Assinatura")
-        nome_ass = st.text_input("Serviço (Ex: Netflix)")
+        nome_ass = st.text_input("Serviço (Ex: Google, Netflix)")
         val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key="val_ass")
         dia_ass = st.number_input("Dia de Vencimento", min_value=1, max_value=31, value=10, key="dia_ass")
         cat_ass = st.selectbox("Categoria", ["Lazer", "Moradia", "Educação", "Saúde", "Outros"], key="cat_ass")
@@ -347,7 +353,7 @@ else:
         if st.button("Registar Serviço", type="primary", use_container_width=True):
             if nome_ass:
                 adicionar_assinatura(usuario, nome_ass, cat_ass, val_ass, dia_ass, conta_ass, forma_ass)
-                st.success("Registado! Será lançado auto todo mês.")
+                st.success("Registado! Só aparecerá no Extrato no dia do vencimento.")
                 st.rerun()
             else:
                 st.warning("Preencha o nome do serviço.")
@@ -374,7 +380,7 @@ else:
             st.success("Investimento guardado!")
             st.rerun()
 
-    # --- CORPO DO DASHBOARD (AGORA COM ABA ASSINATURAS) ---
+    # --- CORPO DO DASHBOARD ---
     st.title("📊 Maza Finance")
     aba_visao_geral, aba_assinaturas, aba_modulo_va, aba_carteira, aba_saude = st.tabs(["💰 Fluxo de Caixa", "🔄 Assinaturas", "🍔 Vale Alimentação", "💼 Investimentos", "🏆 Saúde Financeira"])
     
@@ -529,14 +535,13 @@ else:
                                 st.error("Lançamento apagado!")
                                 st.rerun()
 
-    # NOVA ABA PRINCIPAL: GESTÃO DE ASSINATURAS
     with aba_assinaturas:
         st.subheader("🔄 Gestão de Contas Fixas e Assinaturas")
-        st.write("Os serviços registados aqui serão lançados automaticamente no seu Extrato no início de cada mês com o status 'Pendente'.")
+        st.write("Os serviços registados aqui serão lançados automaticamente no seu Extrato apenas quando chegar o dia de vencimento de cada mês.")
         
         df_ass = buscar_assinaturas(usuario)
         if df_ass.empty:
-            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Assinaturas) para adicionar a Netflix, Internet, Academia, etc.")
+            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Fixas) para adicionar a Netflix, Google, Internet, etc.")
         else:
             c1, c2 = st.columns([1, 2])
             with c1:
@@ -554,7 +559,7 @@ else:
                     st.warning("Ao apagar, este serviço não será mais lançado automaticamente nos próximos meses.")
                     if st.button("Confirmar Exclusão", type="primary", use_container_width=True):
                         deletar_assinatura(id_ass_del)
-                        st.success("Assinatura removida do sistema automágico!")
+                        st.success("Assinatura removida do sistema!")
                         st.rerun()
 
     with aba_modulo_va:
