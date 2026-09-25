@@ -71,8 +71,6 @@ def inicializar_banco_dados():
     c.execute('''CREATE TABLE IF NOT EXISTS va_transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), valor REAL, descricao TEXT)''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS assinaturas (id SERIAL PRIMARY KEY, usuario VARCHAR(255), nome VARCHAR(255), categoria VARCHAR(255), valor REAL, dia_vencimento INTEGER, conta VARCHAR(255), forma_pagamento VARCHAR(50))''')
-    
-    # NOVA TABELA PARA CONTROLO INDIVIDUAL POR ASSINATURA
     c.execute('''CREATE TABLE IF NOT EXISTS log_assinaturas (id_assinatura INTEGER, mes_ano VARCHAR(20), PRIMARY KEY(id_assinatura, mes_ano))''')
 
     def check_and_add_column(table, column, col_type, default_val):
@@ -120,6 +118,11 @@ def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, c
               (data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento, id_transacao))
     buscar_transacoes.clear()
 
+# --- NOVA FUNÇÃO: BAIXA RÁPIDA ---
+def marcar_como_paga(id_transacao):
+    c.execute("UPDATE transacoes SET status='Pago' WHERE id=%s", (id_transacao,))
+    buscar_transacoes.clear()
+
 # FUNÇÕES DE ASSINATURAS RECORRENTES
 def adicionar_assinatura(usuario, nome, categoria, valor, dia, conta, forma_pagamento):
     c.execute("INSERT INTO assinaturas (usuario, nome, categoria, valor, dia_vencimento, conta, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
@@ -147,13 +150,10 @@ def verificar_e_lancar_assinaturas(usuario):
             id_ass = int(row['ID'])
             dia_venc = int(row['Dia Venc.'])
             
-            # Garante que se o dia configurado for 31 e o mês for fevereiro, ele lança no dia 28/29
             ultimo_dia_mes = calendar.monthrange(hoje.year, hoje.month)[1]
             dia_real = min(dia_venc, ultimo_dia_mes)
             
-            # O GATILHO INTELIGENTE: Só lança se o dia de hoje for maior ou igual ao vencimento
             if dia_atual >= dia_real:
-                # Verifica se a assinatura já foi lançada NESTE mês
                 c.execute("SELECT 1 FROM log_assinaturas WHERE id_assinatura = %s AND mes_ano = %s", (id_ass, mes_ano_atual))
                 if not c.fetchone():
                     data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
@@ -276,7 +276,6 @@ if not st.session_state['logado']:
 else:
     usuario = st.session_state['usuario_atual']
     
-    # MOTOR AUTOMÁTICO DE ASSINATURAS INTELIGENTE
     verificar_e_lancar_assinaturas(usuario)
     
     st.sidebar.title(f"👤 Olá, {usuario}")
@@ -398,6 +397,7 @@ else:
                 df_pendentes['Data_Real'] = pd.to_datetime(df_pendentes['Data']).dt.date
                 hoje = datetime.today().date()
                 atrasadas, vencem_hoje, prox = df_pendentes[df_pendentes['Data_Real'] < hoje], df_pendentes[df_pendentes['Data_Real'] == hoje], df_pendentes[(df_pendentes['Data_Real'] > hoje) & (df_pendentes['Data_Real'] <= hoje + timedelta(days=5))]
+                
                 if not atrasadas.empty or not vencem_hoje.empty or not prox.empty:
                     st.subheader("📅 Central de Vencimentos")
                     c1, c2, c3 = st.columns(3)
@@ -407,14 +407,34 @@ else:
                         if not vencem_hoje.empty: st.warning(f"🟡 {len(vencem_hoje)} Vencem HOJE!\nR$ {vencem_hoje['Valor'].sum():.2f}")
                     with c3: 
                         if not prox.empty: st.info(f"🔵 {len(prox)} em 5 dias\nR$ {prox['Valor'].sum():.2f}")
+                    
+                    # --- NOVO MENU DE BAIXA RÁPIDA NA CENTRAL ---
+                    with st.expander("💸 Contas Pendentes (Clique para Dar Baixa)", expanded=True):
+                        df_pendentes_ordenado = df_pendentes.sort_values(by='Data_Real')
+                        for idx, row in df_pendentes_ordenado.iterrows():
+                            data_f = row['Data_Real'].strftime('%d/%m/%Y')
+                            
+                            # Define o ícone com base na data
+                            if row['Data_Real'] < hoje: icone = "🔴"
+                            elif row['Data_Real'] == hoje: icone = "🟡"
+                            else: icone = "🔵"
+                            
+                            col_txt, col_btn = st.columns([4, 1])
+                            with col_txt:
+                                st.write(f"{icone} **{data_f}** | {row['Descrição']} | **R$ {row['Valor']:.2f}**")
+                            with col_btn:
+                                if st.button("✅ Dar Baixa", key=f"baixa_{row['ID']}"):
+                                    marcar_como_paga(row['ID'])
+                                    st.success("Conta paga com sucesso!")
+                                    st.rerun()
                     st.markdown("---")
 
             df_filtrado = df[df['MesAno'] == mes_selecionado] if mes_selecionado != "Todos os Meses" else df
             if not df_filtrado.empty:
                 entradas_pagas, despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum(), df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 c1, c2, c3, c4 = st.columns(4)
-                with c1: st.metric("Entradas", f"R$ {entradas_pagas:,.2f}")
-                with c2: st.metric("Despesas", f"R$ {despesas_pagas:,.2f}")
+                with c1: st.metric("Entradas (Pagas)", f"R$ {entradas_pagas:,.2f}")
+                with c2: st.metric("Despesas (Pagas)", f"R$ {despesas_pagas:,.2f}")
                 with c3: st.metric("Saldo Atual", f"R$ {entradas_pagas - despesas_pagas:,.2f}")
                 with c4: st.metric("⚠️ A Pagar (Pendentes)", f"R$ {df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pendente')]['Valor'].sum():,.2f}")
                 
