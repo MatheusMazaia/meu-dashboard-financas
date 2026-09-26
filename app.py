@@ -298,7 +298,7 @@ else:
         
     st.sidebar.markdown("---")
     
-    aba_ia, aba_lancamento, aba_fixas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Fixas", "🍔 VA", "📈 Investir"])
+    aba_ia, aba_lancamento, aba_assinaturas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Assinaturas", "🍔 VA", "📈 Investir"])
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
@@ -352,7 +352,7 @@ else:
             st.success("Lançamento guardado!")
             st.rerun()
             
-    with aba_fixas:
+    with aba_assinatura:
         st.subheader("🔄 Nova Assinatura")
         nome_ass = st.text_input("Serviço (Ex: Google, Netflix)")
         val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key="val_ass")
@@ -571,7 +571,7 @@ else:
         
         df_ass = buscar_assinaturas(usuario)
         if df_ass.empty:
-            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Fixas) para adicionar a Netflix, Google, Internet, etc.")
+            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Assinaturas) para adicionar a Netflix, Google, Internet, etc.")
         else:
             c1, c2 = st.columns([1, 2])
             with c1:
