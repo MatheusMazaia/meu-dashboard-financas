@@ -352,7 +352,7 @@ else:
             st.success("Lançamento guardado!")
             st.rerun()
             
-    with aba_assinatura:
+    with aba_assinaturas:
         st.subheader("🔄 Nova Assinatura")
         nome_ass = st.text_input("Serviço (Ex: Google, Netflix)")
         val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key="val_ass")
