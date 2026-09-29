@@ -81,7 +81,6 @@ def inicializar_banco_dados():
     check_and_add_column('transacoes', 'conta', 'VARCHAR(255)', 'Geral')
     check_and_add_column('transacoes', 'status', 'VARCHAR(50)', 'Pago')
     check_and_add_column('transacoes', 'forma_pagamento', 'VARCHAR(50)', 'Débito')
-    # NOVA COLUNA: Taxa Anual para Investimentos
     check_and_add_column('investimentos', 'taxa_anual', 'REAL', '0.0')
 
 inicializar_banco_dados()
@@ -184,9 +183,14 @@ def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao):
               (usuario, data, tipo, valor, taxa_anual, desc_segura))
     buscar_investimentos.clear()
 
+def atualizar_investimento(id_inv, data, tipo, valor, taxa_anual, descricao):
+    desc_segura = criptografar(descricao)
+    c.execute("UPDATE investimentos SET data=%s, tipo=%s, valor=%s, taxa_anual=%s, descricao=%s WHERE id=%s", 
+              (data, tipo, valor, taxa_anual, desc_segura, id_inv))
+    buscar_investimentos.clear()
+
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_investimentos(usuario):
-    # A ordem agora é: 0=id, 1=data, 2=tipo, 3=valor, 4=taxa_anual, 5=descricao
     c.execute("SELECT id, data, tipo, valor, taxa_anual, descricao FROM investimentos WHERE usuario = %s", (usuario,))
     linhas = c.fetchall()
     linhas_descriptografadas = []
@@ -629,7 +633,6 @@ else:
             valores_atualizados = []
             lucros = []
             
-            # O "Cérebro Matemático" que calcula os rendimentos exatos por dia
             for idx, row in df_inv.iterrows():
                 data_investimento = pd.to_datetime(row['Data']).date()
                 dias_passados = (hoje - data_investimento).days
@@ -638,7 +641,6 @@ else:
                 valor_orig = float(row['Valor Original'])
                 taxa_aa = float(row['Taxa Anual (%)'])
                 
-                # Fórmula do Montante com Juros Compostos (M = C * (1+i)^t)
                 valor_atual = valor_orig * ((1 + taxa_aa / 100) ** (dias_passados / 365))
                 lucro = valor_atual - valor_orig
                 
@@ -652,7 +654,6 @@ else:
             total_atual = df_inv['Valor Atualizado'].sum()
             lucro_total = total_atual - total_original
             
-            # Os cartões de cima com o seu lucro real
             c1, c2, c3 = st.columns(3)
             with c1: st.metric("Total Investido (Bolso)", f"R$ {total_original:,.2f}")
             with c2: st.metric("Saldo Atualizado", f"R$ {total_atual:,.2f}", delta=f"R$ {lucro_total:,.2f} de lucro")
@@ -667,6 +668,43 @@ else:
             with g2: 
                 st.write("**As suas posições em aberto:**")
                 st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
+
+            # --- NOVO BLOCO: EDITAR E EXCLUIR INVESTIMENTOS ---
+            st.markdown("---")
+            with st.expander("✏️ Gerir Investimentos (Editar ou Excluir)", expanded=False):
+                opcoes_inv = df_inv['ID'].astype(str) + " - " + df_inv['Descrição'] + " (R$ " + df_inv['Valor Original'].astype(str) + ")"
+                escolha_inv = st.selectbox("Selecione o Investimento pelo ID ou Nome:", opcoes_inv.tolist())
+                
+                if escolha_inv:
+                    id_selecionado_inv = int(escolha_inv.split(" - ")[0])
+                    linha_inv = df_inv[df_inv['ID'] == id_selecionado_inv].iloc[0]
+                    
+                    aba_editar_inv, aba_excluir_inv = st.tabs(["✏️ Atualizar Dados", "🗑️ Apagar Registo"])
+                    
+                    with aba_editar_inv:
+                        c1_inv, c2_inv = st.columns(2)
+                        with c1_inv:
+                            ops_tipo_inv = ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"]
+                            n_tipo_inv = st.selectbox("Tipo de Ativo", ops_tipo_inv, index=ops_tipo_inv.index(linha_inv['Tipo']) if linha_inv['Tipo'] in ops_tipo_inv else 0, key=f"tipo_inv_{id_selecionado_inv}")
+                            n_valor_inv = st.number_input("Valor Investido (R$)", min_value=0.01, value=float(linha_inv['Valor Original']), key=f"val_inv_{id_selecionado_inv}")
+                            
+                        with c2_inv:
+                            n_data_inv = st.date_input("Data do Investimento", pd.to_datetime(linha_inv['Data']).date(), key=f"data_inv_{id_selecionado_inv}")
+                            n_taxa_inv = st.number_input("Taxa Anual Esperada (%)", min_value=0.0, value=float(linha_inv['Taxa Anual (%)']), format="%.2f", key=f"taxa_inv_{id_selecionado_inv}")
+                            
+                        n_desc_inv = st.text_input("Descrição", value=linha_inv['Descrição'], key=f"desc_inv_{id_selecionado_inv}")
+                        
+                        if st.button("💾 Guardar Alterações", type="primary", use_container_width=True, key=f"btn_salvar_inv_{id_selecionado_inv}"):
+                            atualizar_investimento(id_selecionado_inv, str(n_data_inv), n_tipo_inv, n_valor_inv, n_taxa_inv, n_desc_inv)
+                            st.success("Investimento atualizado com sucesso!")
+                            st.rerun()
+                            
+                    with aba_excluir_inv:
+                        st.warning(f"Tem a certeza que quer apagar permanentemente **{linha_inv['Descrição']}** (R$ {linha_inv['Valor Original']})?")
+                        if st.button("Sim, Excluir Investimento", type="primary", use_container_width=True, key=f"btn_excluir_inv_{id_selecionado_inv}"):
+                            deletar_investimento(id_selecionado_inv)
+                            st.error("Investimento apagado da carteira!")
+                            st.rerun()
 
         st.markdown("---")
         st.subheader("🔮 Simulador de Rendimentos")
