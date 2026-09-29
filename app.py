@@ -81,6 +81,8 @@ def inicializar_banco_dados():
     check_and_add_column('transacoes', 'conta', 'VARCHAR(255)', 'Geral')
     check_and_add_column('transacoes', 'status', 'VARCHAR(50)', 'Pago')
     check_and_add_column('transacoes', 'forma_pagamento', 'VARCHAR(50)', 'Débito')
+    # NOVA COLUNA: Taxa Anual para Investimentos
+    check_and_add_column('investimentos', 'taxa_anual', 'REAL', '0.0')
 
 inicializar_banco_dados()
 
@@ -104,7 +106,6 @@ def buscar_transacoes(usuario):
     linhas_descriptografadas = []
     for linha in linhas:
         linha_lista = list(linha)
-        # Proteção contra dupla criptografia
         texto_original = linha_lista[5]
         try:
             texto_limpo = descriptografar(texto_original)
@@ -113,7 +114,6 @@ def buscar_transacoes(usuario):
             linha_lista[5] = texto_limpo
         except Exception:
             linha_lista[5] = texto_original
-            
         linhas_descriptografadas.append(linha_lista)
     return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
 
@@ -127,7 +127,6 @@ def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, c
               (data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento, id_transacao))
     buscar_transacoes.clear()
 
-# --- FUNÇÃO: BAIXA RÁPIDA ---
 def marcar_como_paga(id_transacao):
     c.execute("UPDATE transacoes SET status='Pago' WHERE id=%s", (id_transacao,))
     buscar_transacoes.clear()
@@ -166,8 +165,6 @@ def verificar_e_lancar_assinaturas(usuario):
                 c.execute("SELECT 1 FROM log_assinaturas WHERE id_assinatura = %s AND mes_ano = %s", (id_ass, mes_ano_atual))
                 if not c.fetchone():
                     data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
-                    
-                    # Correção: String segura formatada antes de criptografar
                     nome_seguro = str(row['Nome']) + " (Assinatura)"
                     desc_segura = criptografar(nome_seguro)
                     
@@ -180,27 +177,30 @@ def verificar_e_lancar_assinaturas(usuario):
         if lancou_algo:
             buscar_transacoes.clear()
 
-# Resto das funções
-def adicionar_investimento(usuario, data, tipo, valor, descricao):
+# --- FUNÇÕES DE INVESTIMENTOS ATUALIZADAS ---
+def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao):
     desc_segura = criptografar(descricao)
-    c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, descricao) VALUES (%s, %s, %s, %s, %s)", (usuario, data, tipo, valor, desc_segura))
+    c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, taxa_anual, descricao) VALUES (%s, %s, %s, %s, %s, %s)", 
+              (usuario, data, tipo, valor, taxa_anual, desc_segura))
     buscar_investimentos.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_investimentos(usuario):
-    c.execute("SELECT id, data, tipo, valor, descricao FROM investimentos WHERE usuario = %s", (usuario,))
+    # A ordem agora é: 0=id, 1=data, 2=tipo, 3=valor, 4=taxa_anual, 5=descricao
+    c.execute("SELECT id, data, tipo, valor, taxa_anual, descricao FROM investimentos WHERE usuario = %s", (usuario,))
     linhas = c.fetchall()
     linhas_descriptografadas = []
     for linha in linhas:
         linha_lista = list(linha)
-        linha_lista[4] = descriptografar(linha_lista[4])
+        linha_lista[5] = descriptografar(linha_lista[5])
         linhas_descriptografadas.append(linha_lista)
-    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Valor', 'Descrição'])
+    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Valor Original', 'Taxa Anual (%)', 'Descrição'])
 
 def deletar_investimento(id_inv): 
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
     buscar_investimentos.clear()
 
+# VA Functions
 def salvar_config_va(usuario, saldo): 
     c.execute("INSERT INTO va_config (usuario, saldo) VALUES (%s, %s) ON CONFLICT (usuario) DO UPDATE SET saldo = EXCLUDED.saldo", (usuario, saldo))
     buscar_config_va.clear()
@@ -298,7 +298,7 @@ else:
         
     st.sidebar.markdown("---")
     
-    aba_ia, aba_lancamento, aba_assinaturas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Assinaturas", "🍔 VA", "📈 Investir"])
+    aba_ia, aba_lancamento, aba_fixas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Fixas", "🍔 VA", "📈 Investir"])
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
@@ -352,7 +352,7 @@ else:
             st.success("Lançamento guardado!")
             st.rerun()
             
-    with aba_assinaturas:
+    with aba_fixas:
         st.subheader("🔄 Nova Assinatura")
         nome_ass = st.text_input("Serviço (Ex: Google, Netflix)")
         val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key="val_ass")
@@ -384,10 +384,15 @@ else:
             st.success("Registado!")
             st.rerun()
 
+    # MENU DE INVESTIMENTOS ATUALIZADO
     with aba_investimento:
-        tipo_inv, data_inv, valor_inv, desc_inv = st.selectbox("Tipo", ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"]), st.date_input("Data", datetime.today(), format="DD/MM/YYYY"), st.number_input("Valor", 0.01, format="%.2f"), st.text_input("Descrição", key="d_inv")
+        tipo_inv = st.selectbox("Tipo", ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"])
+        data_inv = st.date_input("Data Inicial", datetime.today(), format="DD/MM/YYYY")
+        valor_inv = st.number_input("Valor Investido (R$)", 0.01, format="%.2f")
+        taxa_inv = st.number_input("Taxa Anual Esperada (%)", 0.0, format="%.2f", help="Ex: 10.5 para 10,5% ao ano.")
+        desc_inv = st.text_input("Descrição", key="d_inv")
         if st.button("Guardar Investimento", type="primary", use_container_width=True):
-            adicionar_investimento(usuario, str(data_inv), tipo_inv, valor_inv, desc_inv)
+            adicionar_investimento(usuario, str(data_inv), tipo_inv, valor_inv, taxa_inv, desc_inv)
             st.success("Investimento guardado!")
             st.rerun()
 
@@ -571,7 +576,7 @@ else:
         
         df_ass = buscar_assinaturas(usuario)
         if df_ass.empty:
-            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Assinaturas) para adicionar a Netflix, Google, Internet, etc.")
+            st.info("Nenhuma assinatura registada. Use o menu lateral (🔄 Fixas) para adicionar a Netflix, Google, Internet, etc.")
         else:
             c1, c2 = st.columns([1, 2])
             with c1:
@@ -612,17 +617,55 @@ else:
             st.plotly_chart(px.bar(pd.DataFrame({'S': ['Gasto', 'Disp'], 'P': [pct, 100-pct]}), x='P', y=['VA','VA'], color='S', orientation='h', template="plotly_dark").update_layout(xaxis=dict(range=[0, 100])), use_container_width=True)
         if not df_va_f.empty: st.data_editor(df_va_f.drop(columns=['MesAno'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
 
+    # --- ABA DE INVESTIMENTOS (O NOVO HOME BROKER) ---
     with aba_carteira:
-        st.subheader("💼 Património")
+        st.subheader("💼 Património e Rendimentos")
         df_inv = buscar_investimentos(usuario)
+        
         if df_inv.empty: 
             st.info("Sem investimentos registados na sua carteira.")
         else:
-            st.metric("Total Acumulado", f"R$ {df_inv['Valor'].sum():,.2f}")
-            c1, c2 = st.columns([1, 1])
-            with c1: 
-                st.plotly_chart(px.pie(df_inv.groupby('Tipo')['Valor'].sum().reset_index(), values='Valor', names='Tipo', hole=0.4, template="plotly_dark"), use_container_width=True)
-            with c2: 
+            hoje = datetime.today().date()
+            valores_atualizados = []
+            lucros = []
+            
+            # O "Cérebro Matemático" que calcula os rendimentos exatos por dia
+            for idx, row in df_inv.iterrows():
+                data_investimento = pd.to_datetime(row['Data']).date()
+                dias_passados = (hoje - data_investimento).days
+                if dias_passados < 0: dias_passados = 0
+                
+                valor_orig = float(row['Valor Original'])
+                taxa_aa = float(row['Taxa Anual (%)'])
+                
+                # Fórmula do Montante com Juros Compostos (M = C * (1+i)^t)
+                valor_atual = valor_orig * ((1 + taxa_aa / 100) ** (dias_passados / 365))
+                lucro = valor_atual - valor_orig
+                
+                valores_atualizados.append(round(valor_atual, 2))
+                lucros.append(round(lucro, 2))
+                
+            df_inv['Valor Atualizado'] = valores_atualizados
+            df_inv['Lucro (R$)'] = lucros
+            
+            total_original = df_inv['Valor Original'].sum()
+            total_atual = df_inv['Valor Atualizado'].sum()
+            lucro_total = total_atual - total_original
+            
+            # Os cartões de cima com o seu lucro real
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Total Investido (Bolso)", f"R$ {total_original:,.2f}")
+            with c2: st.metric("Saldo Atualizado", f"R$ {total_atual:,.2f}", delta=f"R$ {lucro_total:,.2f} de lucro")
+            with c3: 
+                pct_lucro = (lucro_total / total_original) * 100 if total_original > 0 else 0
+                st.metric("Rentabilidade Global", f"{pct_lucro:.2f}%")
+            
+            st.markdown("---")
+            g1, g2 = st.columns([1, 2])
+            with g1: 
+                st.plotly_chart(px.pie(df_inv.groupby('Tipo')['Valor Atualizado'].sum().reset_index(), values='Valor Atualizado', names='Tipo', hole=0.4, template="plotly_dark", title="Alocação Atual"), use_container_width=True)
+            with g2: 
+                st.write("**As suas posições em aberto:**")
                 st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
 
         st.markdown("---")
