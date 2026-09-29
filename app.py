@@ -401,7 +401,7 @@ else:
 
     # --- CORPO DO DASHBOARD ---
     st.title("📊 Maza Finance")
-    aba_visao_geral, aba_assinaturas, aba_modulo_va, aba_carteira, aba_saude = st.tabs(["💰 Fluxo de Caixa", "🔄 Assinaturas", "🍔 Vale Alimentação", "💼 Investimentos", "🏆 Saúde Financeira"])
+    aba_visao_geral, aba_assinaturas_principal, aba_modulo_va, aba_carteira, aba_saude = st.tabs(["💰 Fluxo de Caixa", "🔄 Assinaturas", "🍔 Vale Alimentação", "💼 Investimentos", "🏆 Saúde Financeira"])
     
     with aba_visao_geral:
         df = buscar_transacoes(usuario)
@@ -410,9 +410,27 @@ else:
             df['Valor'] = df['Valor'].astype(float)
             df['Data_dt'] = pd.to_datetime(df['Data'])
             df['MesAno'] = df['Data_dt'].dt.strftime('%m/%Y')
-            mes_selecionado = st.selectbox("📅 Mês", ["Todos os Meses"] + sorted(df['MesAno'].unique().tolist(), reverse=True))
             
+            # --- NOVO: FILTRO DUPLO (Mês e Conta) ---
+            col_filtro1, col_filtro2 = st.columns(2)
+            with col_filtro1:
+                mes_selecionado = st.selectbox("📅 Mês", ["Todos os Meses"] + sorted(df['MesAno'].unique().tolist(), reverse=True))
+            with col_filtro2:
+                contas_disponiveis = sorted(df['Conta'].unique().tolist())
+                conta_selecionada = st.selectbox("🏦 Conta", ["Todas as Contas"] + contas_disponiveis)
+            
+            # Filtro da base de dados consoante a escolha
+            df_filtrado = df.copy()
+            if mes_selecionado != "Todos os Meses":
+                df_filtrado = df_filtrado[df_filtrado['MesAno'] == mes_selecionado]
+            if conta_selecionada != "Todas as Contas":
+                df_filtrado = df_filtrado[df_filtrado['Conta'] == conta_selecionada]
+            
+            # A Central de Vencimentos continua a olhar apenas para o mês selecionado, ignorando a conta, para não perder prazos
             df_pendentes = df[df['Status'] == 'Pendente'].copy()
+            if mes_selecionado != "Todos os Meses":
+                df_pendentes = df_pendentes[df_pendentes['MesAno'] == mes_selecionado]
+                
             if not df_pendentes.empty:
                 df_pendentes['Data_Real'] = pd.to_datetime(df_pendentes['Data']).dt.date
                 hoje = datetime.today().date()
@@ -439,7 +457,7 @@ else:
                             
                             col_txt, col_btn = st.columns([4, 1])
                             with col_txt:
-                                st.write(f"{icone} **{data_f}** | {row['Descrição']} | **R$ {row['Valor']:.2f}**")
+                                st.write(f"{icone} **{data_f}** | {row['Descrição']} | **R$ {row['Valor']:.2f}** | {row['Conta']}")
                             with col_btn:
                                 if st.button("✅ Dar Baixa", key=f"baixa_{row['ID']}"):
                                     marcar_como_paga(row['ID'])
@@ -447,7 +465,6 @@ else:
                                     st.rerun()
                     st.markdown("---")
 
-            df_filtrado = df[df['MesAno'] == mes_selecionado] if mes_selecionado != "Todos os Meses" else df
             if not df_filtrado.empty:
                 entradas_pagas, despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum(), df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 c1, c2, c3, c4 = st.columns(4)
@@ -459,20 +476,17 @@ else:
                 df_desp = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
                 with st.expander("📉 Análise de Despesas", expanded=False):
                     if not df_desp.empty:
-                        # Gráficos (Por Categoria) - CORES CORRIGIDAS
                         g1, g2 = st.columns(2)
                         res_cat = df_desp.groupby('Categoria')['Valor'].sum().reset_index()
                         with g1: 
                             st.plotly_chart(px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.5, template="plotly_dark"), use_container_width=True)
                         with g2: 
-                            # Adicionado color='Categoria' para colorir as barras, e escondida a legenda duplicada
                             fig_bar_cat = px.bar(res_cat, x='Categoria', y='Valor', color='Categoria', title="Por Categoria", text_auto='.2f', template="plotly_dark")
                             fig_bar_cat.update_layout(showlegend=False)
                             st.plotly_chart(fig_bar_cat, use_container_width=True)
                         
                         st.markdown("---")
                         
-                        # GRÁFICO: Débito/Pix vs Crédito - CORES CORRIGIDAS
                         df_forma = df_desp.copy()
                         df_forma['Forma Agrupada'] = df_forma['Forma de Pagamento'].apply(lambda x: 'Débito / Pix' if x in ['Débito', 'Pix'] else x)
                         res_forma = df_forma.groupby('Forma Agrupada')['Valor'].sum().reset_index()
@@ -481,7 +495,6 @@ else:
                         with g3: 
                             st.plotly_chart(px.pie(res_forma, values='Valor', names='Forma Agrupada', title="Crédito vs Débito/Pix", hole=0.5, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
                         with g4: 
-                            # Adicionado color='Forma Agrupada' para colorir as barras corretamente
                             fig_bar_forma = px.bar(res_forma, x='Forma Agrupada', y='Valor', color='Forma Agrupada', title="Crédito vs Débito/Pix", text_auto='.2f', template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
                             fig_bar_forma.update_layout(showlegend=False)
                             st.plotly_chart(fig_bar_forma, use_container_width=True)
@@ -508,7 +521,13 @@ else:
                     pdf.set_font("Arial", 'B', 16)
                     pdf.cell(200, 10, txt="Relatorio Financeiro Mensal", ln=True, align='C')
                     pdf.set_font("Arial", '', 12)
-                    pdf.cell(200, 10, txt=f"Mes de Referencia: {mes_selecionado} | Maza Finance", ln=True, align='C')
+                    
+                    # Atualiza o cabeçalho do PDF se estiver filtrado por conta
+                    header_txt = f"Mes de Referencia: {mes_selecionado}"
+                    if conta_selecionada != "Todas as Contas":
+                        header_txt += f" | Conta: {conta_selecionada}"
+                        
+                    pdf.cell(200, 10, txt=f"{header_txt} | Maza Finance", ln=True, align='C')
                     pdf.ln(5)
 
                     pdf.set_font("Arial", 'B', 12)
@@ -538,11 +557,15 @@ else:
                         pdf.ln()
 
                     pdf_bytes = pdf.output(dest='S').encode('latin-1')
+                    
+                    nome_arquivo = f"Maza_Finance_Relatorio_{mes_selecionado.replace('/', '_')}"
+                    if conta_selecionada != "Todas as Contas":
+                        nome_arquivo += f"_{conta_selecionada}"
 
                     st.download_button(
-                        label="⬇️ Baixar Relatório Mensal",
+                        label="⬇️ Baixar Relatório",
                         data=pdf_bytes,
-                        file_name=f"Maza_Finance_Relatorio_{mes_selecionado.replace('/', '_')}.pdf",
+                        file_name=f"{nome_arquivo}.pdf",
                         mime="application/pdf",
                         type="primary",
                         use_container_width=True
@@ -559,7 +582,7 @@ else:
                         id_selecionado = int(escolha.split(" - ")[0])
                         linha = df_filtrado[df_filtrado['ID'] == id_selecionado].iloc[0]
                         
-                        aba_editar, aba_excluir = st.tabs(["✏️ Atualizar Dados", "🗑️️ Apagar Registo"])
+                        aba_editar, aba_excluir = st.tabs(["✏️ Atualizar Dados", "🗑️ Apagar Registo"])
                         
                         with aba_editar:
                             c1, c2 = st.columns(2)
@@ -595,7 +618,7 @@ else:
                                 st.error("Lançamento apagado!")
                                 st.rerun()
 
-    with aba_assinaturas:
+    with aba_assinaturas_principal:
         st.subheader("🔄 Gestão de Contas Fixas e Assinaturas")
         st.write("Os serviços registados aqui serão lançados automaticamente no seu Extrato apenas quando chegar o dia de vencimento de cada mês.")
         
@@ -846,7 +869,7 @@ else:
                     if "429" in erro_str or "quota" in erro_str:
                         return "⏳ **O Consultor IA está muito requisitado no momento!**\n\nAtingimos o limite temporário de consultas rápidas da Google. Por favor, aguarde cerca de um minuto e navegue pelas outras abas antes de voltar aqui para receber o seu diagnóstico."
                     else:
-                        return "🛠️️ **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
+                        return "🛠 **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
             with st.spinner("A gerar a sua análise personalizada..."):
                 texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
