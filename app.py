@@ -105,6 +105,7 @@ def buscar_transacoes(usuario):
     linhas_descriptografadas = []
     for linha in linhas:
         linha_lista = list(linha)
+        # Proteção contra dupla criptografia
         texto_original = linha_lista[5]
         try:
             texto_limpo = descriptografar(texto_original)
@@ -113,6 +114,7 @@ def buscar_transacoes(usuario):
             linha_lista[5] = texto_limpo
         except Exception:
             linha_lista[5] = texto_original
+            
         linhas_descriptografadas.append(linha_lista)
     return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
 
@@ -126,6 +128,7 @@ def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, c
               (data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento, id_transacao))
     buscar_transacoes.clear()
 
+# --- FUNÇÃO: BAIXA RÁPIDA ---
 def marcar_como_paga(id_transacao):
     c.execute("UPDATE transacoes SET status='Pago' WHERE id=%s", (id_transacao,))
     buscar_transacoes.clear()
@@ -164,6 +167,8 @@ def verificar_e_lancar_assinaturas(usuario):
                 c.execute("SELECT 1 FROM log_assinaturas WHERE id_assinatura = %s AND mes_ano = %s", (id_ass, mes_ano_atual))
                 if not c.fetchone():
                     data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
+                    
+                    # Correção: String segura formatada antes de criptografar
                     nome_seguro = str(row['Nome']) + " (Assinatura)"
                     desc_segura = criptografar(nome_seguro)
                     
@@ -176,7 +181,7 @@ def verificar_e_lancar_assinaturas(usuario):
         if lancou_algo:
             buscar_transacoes.clear()
 
-# --- FUNÇÕES DE INVESTIMENTOS ATUALIZADAS ---
+# Resto das funções
 def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao):
     desc_segura = criptografar(descricao)
     c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, taxa_anual, descricao) VALUES (%s, %s, %s, %s, %s, %s)", 
@@ -204,7 +209,6 @@ def deletar_investimento(id_inv):
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
     buscar_investimentos.clear()
 
-# VA Functions
 def salvar_config_va(usuario, saldo): 
     c.execute("INSERT INTO va_config (usuario, saldo) VALUES (%s, %s) ON CONFLICT (usuario) DO UPDATE SET saldo = EXCLUDED.saldo", (usuario, saldo))
     buscar_config_va.clear()
@@ -459,11 +463,26 @@ else:
                 
                 df_desp = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
                 with st.expander("📉 Análise de Despesas", expanded=False):
-                    g1, g2 = st.columns(2)
                     if not df_desp.empty:
-                        res = df_desp.groupby('Categoria')['Valor'].sum().reset_index()
-                        with g1: st.plotly_chart(px.pie(res, values='Valor', names='Categoria', hole=0.5, template="plotly_dark"), use_container_width=True)
-                        with g2: st.plotly_chart(px.bar(res, x='Categoria', y='Valor', text_auto='.2f', template="plotly_dark"), use_container_width=True)
+                        # Gráficos Antigos (Por Categoria)
+                        g1, g2 = st.columns(2)
+                        res_cat = df_desp.groupby('Categoria')['Valor'].sum().reset_index()
+                        with g1: st.plotly_chart(px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.5, template="plotly_dark"), use_container_width=True)
+                        with g2: st.plotly_chart(px.bar(res_cat, x='Categoria', y='Valor', title="Por Categoria", text_auto='.2f', template="plotly_dark"), use_container_width=True)
+                        
+                        st.markdown("---")
+                        
+                        # NOVO GRÁFICO: Débito/Pix vs Crédito
+                        df_forma = df_desp.copy()
+                        # Agrupa Pix e Débito num só. Mantém Crédito e os restantes separados.
+                        df_forma['Forma Agrupada'] = df_forma['Forma de Pagamento'].apply(lambda x: 'Débito / Pix' if x in ['Débito', 'Pix'] else x)
+                        res_forma = df_forma.groupby('Forma Agrupada')['Valor'].sum().reset_index()
+                        
+                        g3, g4 = st.columns(2)
+                        with g3: 
+                            st.plotly_chart(px.pie(res_forma, values='Valor', names='Forma Agrupada', title="Crédito vs Débito/Pix", hole=0.5, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
+                        with g4: 
+                            st.plotly_chart(px.bar(res_forma, x='Forma Agrupada', y='Valor', title="Crédito vs Débito/Pix", text_auto='.2f', template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
                             
                 st.subheader("📋 Extrato")
                 df_edit = df_filtrado.copy()
@@ -669,7 +688,7 @@ else:
                 st.write("**As suas posições em aberto:**")
                 st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
 
-            # --- NOVO BLOCO: EDITAR E EXCLUIR INVESTIMENTOS ---
+            # --- BLOCO: EDITAR E EXCLUIR INVESTIMENTOS ---
             st.markdown("---")
             with st.expander("✏️ Gerir Investimentos (Editar ou Excluir)", expanded=False):
                 opcoes_inv = df_inv['ID'].astype(str) + " - " + df_inv['Descrição'] + " (R$ " + df_inv['Valor Original'].astype(str) + ")"
