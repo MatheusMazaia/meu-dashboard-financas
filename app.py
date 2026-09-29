@@ -411,22 +411,22 @@ else:
             df['Data_dt'] = pd.to_datetime(df['Data'])
             df['MesAno'] = df['Data_dt'].dt.strftime('%m/%Y')
             
-            # --- NOVO: FILTRO DUPLO (Mês e Conta) ---
+            # --- CORREÇÃO: ORDENAÇÃO CRONOLÓGICA DOS MESES ---
             col_filtro1, col_filtro2 = st.columns(2)
             with col_filtro1:
-                mes_selecionado = st.selectbox("📅 Mês", ["Todos os Meses"] + sorted(df['MesAno'].unique().tolist(), reverse=True))
+                meses_unicos = df['MesAno'].unique().tolist()
+                meses_ordenados = sorted(meses_unicos, key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=True)
+                mes_selecionado = st.selectbox("📅 Mês", ["Todos os Meses"] + meses_ordenados)
             with col_filtro2:
                 contas_disponiveis = sorted(df['Conta'].unique().tolist())
                 conta_selecionada = st.selectbox("🏦 Conta", ["Todas as Contas"] + contas_disponiveis)
             
-            # Filtro da base de dados consoante a escolha
             df_filtrado = df.copy()
             if mes_selecionado != "Todos os Meses":
                 df_filtrado = df_filtrado[df_filtrado['MesAno'] == mes_selecionado]
             if conta_selecionada != "Todas as Contas":
                 df_filtrado = df_filtrado[df_filtrado['Conta'] == conta_selecionada]
             
-            # A Central de Vencimentos continua a olhar apenas para o mês selecionado, ignorando a conta, para não perder prazos
             df_pendentes = df[df['Status'] == 'Pendente'].copy()
             if mes_selecionado != "Todos os Meses":
                 df_pendentes = df_pendentes[df_pendentes['MesAno'] == mes_selecionado]
@@ -522,7 +522,6 @@ else:
                     pdf.cell(200, 10, txt="Relatorio Financeiro Mensal", ln=True, align='C')
                     pdf.set_font("Arial", '', 12)
                     
-                    # Atualiza o cabeçalho do PDF se estiver filtrado por conta
                     header_txt = f"Mes de Referencia: {mes_selecionado}"
                     if conta_selecionada != "Todas as Contas":
                         header_txt += f" | Conta: {conta_selecionada}"
@@ -651,7 +650,10 @@ else:
         df_va_f = df_va.copy()
         if not df_va.empty:
             df_va_f['MesAno'] = pd.to_datetime(df_va_f['Data']).dt.strftime('%m/%Y')
-            m_va = st.selectbox("📅 Mês VA", ["Todos"] + sorted(df_va_f['MesAno'].unique().tolist(), reverse=True))
+            
+            # --- CORREÇÃO: ORDENAÇÃO CRONOLÓGICA (VA) ---
+            meses_va = sorted(df_va_f['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=True)
+            m_va = st.selectbox("📅 Mês VA", ["Todos"] + meses_va)
             df_va_f = df_va_f[df_va_f['MesAno'] == m_va] if m_va != "Todos" else df_va_f
         
         t_gasto = df_va_f['Valor'].sum() if not df_va_f.empty else 0
@@ -804,7 +806,11 @@ else:
         df_s = buscar_transacoes(usuario)
         if not df_s.empty:
             df_s['MesAno'] = pd.to_datetime(df_s['Data']).dt.strftime('%m/%Y')
-            df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", sorted(df_s['MesAno'].unique().tolist(), reverse=True))]
+            
+            # --- CORREÇÃO: ORDENAÇÃO CRONOLÓGICA (SAÚDE) ---
+            meses_saude = sorted(df_s['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=True)
+            df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", meses_saude)]
+            
             e, d = df_mes[df_mes['Tipo'] == 'Entrada']['Valor'].astype(float).sum(), df_mes[df_mes['Tipo'] == 'Despesa']['Valor'].astype(float).sum()
             
             sc = max(0, min(100, 50 + (30 if d <= e else -30) + (20 if (e - d) >= (e * 0.20) else 0) if e > 0 else 0))
@@ -869,7 +875,7 @@ else:
                     if "429" in erro_str or "quota" in erro_str:
                         return "⏳ **O Consultor IA está muito requisitado no momento!**\n\nAtingimos o limite temporário de consultas rápidas da Google. Por favor, aguarde cerca de um minuto e navegue pelas outras abas antes de voltar aqui para receber o seu diagnóstico."
                     else:
-                        return "🛠 **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
+                        return "🛠️ **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
             with st.spinner("A gerar a sua análise personalizada..."):
                 texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
