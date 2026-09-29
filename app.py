@@ -414,7 +414,6 @@ else:
             col_filtro1, col_filtro2 = st.columns(2)
             with col_filtro1:
                 meses_unicos = df['MesAno'].unique().tolist()
-                # Alterado para reverse=False para ordenar do passado para o futuro
                 meses_ordenados = sorted(meses_unicos, key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
                 mes_selecionado = st.selectbox("📅 Mês", ["Todos os Meses"] + meses_ordenados)
             with col_filtro2:
@@ -479,7 +478,11 @@ else:
                         g1, g2 = st.columns(2)
                         res_cat = df_desp.groupby('Categoria')['Valor'].sum().reset_index()
                         with g1: 
-                            st.plotly_chart(px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.5, template="plotly_dark"), use_container_width=True)
+                            # --- ATUALIZAÇÃO: GRÁFICO CATEGORIA ESTILO INFOGRÁFICO ---
+                            fig_cat = px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.6, template="plotly_dark")
+                            fig_cat.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0E1117', width=2)))
+                            fig_cat.update_layout(showlegend=False, margin=dict(t=40, b=40, l=40, r=40))
+                            st.plotly_chart(fig_cat, use_container_width=True)
                         with g2: 
                             fig_bar_cat = px.bar(res_cat, x='Categoria', y='Valor', color='Categoria', title="Por Categoria", text_auto='.2f', template="plotly_dark")
                             fig_bar_cat.update_layout(showlegend=False)
@@ -493,7 +496,11 @@ else:
                         
                         g3, g4 = st.columns(2)
                         with g3: 
-                            st.plotly_chart(px.pie(res_forma, values='Valor', names='Forma Agrupada', title="Crédito vs Débito/Pix", hole=0.5, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
+                            # --- ATUALIZAÇÃO: GRÁFICO DÉBITO/CRÉDITO ESTILO INFOGRÁFICO ---
+                            fig_forma_pie = px.pie(res_forma, values='Valor', names='Forma Agrupada', title="Crédito vs Débito/Pix", hole=0.6, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
+                            fig_forma_pie.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0E1117', width=2)))
+                            fig_forma_pie.update_layout(showlegend=False, margin=dict(t=40, b=40, l=40, r=40))
+                            st.plotly_chart(fig_forma_pie, use_container_width=True)
                         with g4: 
                             fig_bar_forma = px.bar(res_forma, x='Forma Agrupada', y='Valor', color='Forma Agrupada', title="Crédito vs Débito/Pix", text_auto='.2f', template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
                             fig_bar_forma.update_layout(showlegend=False)
@@ -651,7 +658,6 @@ else:
         if not df_va.empty:
             df_va_f['MesAno'] = pd.to_datetime(df_va_f['Data']).dt.strftime('%m/%Y')
             
-            # --- CORREÇÃO: ORDENAÇÃO CRONOLÓGICA (VA) ---
             meses_va = sorted(df_va_f['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
             m_va = st.selectbox("📅 Mês VA", ["Todos"] + meses_va)
             df_va_f = df_va_f[df_va_f['MesAno'] == m_va] if m_va != "Todos" else df_va_f
@@ -709,7 +715,11 @@ else:
             st.markdown("---")
             g1, g2 = st.columns([1, 2])
             with g1: 
-                st.plotly_chart(px.pie(df_inv.groupby('Tipo')['Valor Atualizado'].sum().reset_index(), values='Valor Atualizado', names='Tipo', hole=0.4, template="plotly_dark", title="Alocação Atual"), use_container_width=True)
+                # --- ATUALIZAÇÃO: GRÁFICO INVESTIMENTOS ESTILO INFOGRÁFICO ---
+                fig_inv = px.pie(df_inv.groupby('Tipo')['Valor Atualizado'].sum().reset_index(), values='Valor Atualizado', names='Tipo', hole=0.6, template="plotly_dark", title="Alocação Atual")
+                fig_inv.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0E1117', width=2)))
+                fig_inv.update_layout(showlegend=False, margin=dict(t=40, b=40, l=40, r=40))
+                st.plotly_chart(fig_inv, use_container_width=True)
             with g2: 
                 st.write("**As suas posições em aberto:**")
                 st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
@@ -807,7 +817,6 @@ else:
         if not df_s.empty:
             df_s['MesAno'] = pd.to_datetime(df_s['Data']).dt.strftime('%m/%Y')
             
-            # --- CORREÇÃO: ORDENAÇÃO CRONOLÓGICA (SAÚDE) ---
             meses_saude = sorted(df_s['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
             df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", meses_saude)]
             
@@ -875,7 +884,7 @@ else:
                     if "429" in erro_str or "quota" in erro_str:
                         return "⏳ **O Consultor IA está muito requisitado no momento!**\n\nAtingimos o limite temporário de consultas rápidas da Google. Por favor, aguarde cerca de um minuto e navegue pelas outras abas antes de voltar aqui para receber o seu diagnóstico."
                     else:
-                        return "🛠️️ **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
+                        return "🛠 **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
             with st.spinner("A gerar a sua análise personalizada..."):
                 texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
