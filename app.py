@@ -105,7 +105,6 @@ def buscar_transacoes(usuario):
     linhas_descriptografadas = []
     for linha in linhas:
         linha_lista = list(linha)
-        # Proteção contra dupla criptografia
         texto_original = linha_lista[5]
         try:
             texto_limpo = descriptografar(texto_original)
@@ -114,7 +113,6 @@ def buscar_transacoes(usuario):
             linha_lista[5] = texto_limpo
         except Exception:
             linha_lista[5] = texto_original
-            
         linhas_descriptografadas.append(linha_lista)
     return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta', 'Status', 'Forma de Pagamento'])
 
@@ -128,7 +126,6 @@ def atualizar_transacao(id_transacao, data, tipo, categoria, valor, descricao, c
               (data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento, id_transacao))
     buscar_transacoes.clear()
 
-# --- FUNÇÃO: BAIXA RÁPIDA ---
 def marcar_como_paga(id_transacao):
     c.execute("UPDATE transacoes SET status='Pago' WHERE id=%s", (id_transacao,))
     buscar_transacoes.clear()
@@ -167,8 +164,6 @@ def verificar_e_lancar_assinaturas(usuario):
                 c.execute("SELECT 1 FROM log_assinaturas WHERE id_assinatura = %s AND mes_ano = %s", (id_ass, mes_ano_atual))
                 if not c.fetchone():
                     data_lanc = f"{hoje.year}-{hoje.month:02d}-{dia_real:02d}"
-                    
-                    # Correção: String segura formatada antes de criptografar
                     nome_seguro = str(row['Nome']) + " (Assinatura)"
                     desc_segura = criptografar(nome_seguro)
                     
@@ -181,7 +176,7 @@ def verificar_e_lancar_assinaturas(usuario):
         if lancou_algo:
             buscar_transacoes.clear()
 
-# Resto das funções
+# --- FUNÇÕES DE INVESTIMENTOS ATUALIZADAS ---
 def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao):
     desc_segura = criptografar(descricao)
     c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, taxa_anual, descricao) VALUES (%s, %s, %s, %s, %s, %s)", 
@@ -209,6 +204,7 @@ def deletar_investimento(id_inv):
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
     buscar_investimentos.clear()
 
+# VA Functions
 def salvar_config_va(usuario, saldo): 
     c.execute("INSERT INTO va_config (usuario, saldo) VALUES (%s, %s) ON CONFLICT (usuario) DO UPDATE SET saldo = EXCLUDED.saldo", (usuario, saldo))
     buscar_config_va.clear()
@@ -392,7 +388,6 @@ else:
             st.success("Registado!")
             st.rerun()
 
-    # MENU DE INVESTIMENTOS ATUALIZADO
     with aba_investimento:
         tipo_inv = st.selectbox("Tipo", ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"])
         data_inv = st.date_input("Data Inicial", datetime.today(), format="DD/MM/YYYY")
@@ -464,17 +459,21 @@ else:
                 df_desp = df_filtrado[df_filtrado['Tipo'] == 'Despesa']
                 with st.expander("📉 Análise de Despesas", expanded=False):
                     if not df_desp.empty:
-                        # Gráficos Antigos (Por Categoria)
+                        # Gráficos (Por Categoria) - CORES CORRIGIDAS
                         g1, g2 = st.columns(2)
                         res_cat = df_desp.groupby('Categoria')['Valor'].sum().reset_index()
-                        with g1: st.plotly_chart(px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.5, template="plotly_dark"), use_container_width=True)
-                        with g2: st.plotly_chart(px.bar(res_cat, x='Categoria', y='Valor', title="Por Categoria", text_auto='.2f', template="plotly_dark"), use_container_width=True)
+                        with g1: 
+                            st.plotly_chart(px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.5, template="plotly_dark"), use_container_width=True)
+                        with g2: 
+                            # Adicionado color='Categoria' para colorir as barras, e escondida a legenda duplicada
+                            fig_bar_cat = px.bar(res_cat, x='Categoria', y='Valor', color='Categoria', title="Por Categoria", text_auto='.2f', template="plotly_dark")
+                            fig_bar_cat.update_layout(showlegend=False)
+                            st.plotly_chart(fig_bar_cat, use_container_width=True)
                         
                         st.markdown("---")
                         
-                        # NOVO GRÁFICO: Débito/Pix vs Crédito
+                        # GRÁFICO: Débito/Pix vs Crédito - CORES CORRIGIDAS
                         df_forma = df_desp.copy()
-                        # Agrupa Pix e Débito num só. Mantém Crédito e os restantes separados.
                         df_forma['Forma Agrupada'] = df_forma['Forma de Pagamento'].apply(lambda x: 'Débito / Pix' if x in ['Débito', 'Pix'] else x)
                         res_forma = df_forma.groupby('Forma Agrupada')['Valor'].sum().reset_index()
                         
@@ -482,7 +481,10 @@ else:
                         with g3: 
                             st.plotly_chart(px.pie(res_forma, values='Valor', names='Forma Agrupada', title="Crédito vs Débito/Pix", hole=0.5, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
                         with g4: 
-                            st.plotly_chart(px.bar(res_forma, x='Forma Agrupada', y='Valor', title="Crédito vs Débito/Pix", text_auto='.2f', template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
+                            # Adicionado color='Forma Agrupada' para colorir as barras corretamente
+                            fig_bar_forma = px.bar(res_forma, x='Forma Agrupada', y='Valor', color='Forma Agrupada', title="Crédito vs Débito/Pix", text_auto='.2f', template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
+                            fig_bar_forma.update_layout(showlegend=False)
+                            st.plotly_chart(fig_bar_forma, use_container_width=True)
                             
                 st.subheader("📋 Extrato")
                 df_edit = df_filtrado.copy()
@@ -557,7 +559,7 @@ else:
                         id_selecionado = int(escolha.split(" - ")[0])
                         linha = df_filtrado[df_filtrado['ID'] == id_selecionado].iloc[0]
                         
-                        aba_editar, aba_excluir = st.tabs(["✏️ Atualizar Dados", "🗑️ Apagar Registo"])
+                        aba_editar, aba_excluir = st.tabs(["✏️ Atualizar Dados", "🗑️️ Apagar Registo"])
                         
                         with aba_editar:
                             c1, c2 = st.columns(2)
@@ -640,7 +642,6 @@ else:
             st.plotly_chart(px.bar(pd.DataFrame({'S': ['Gasto', 'Disp'], 'P': [pct, 100-pct]}), x='P', y=['VA','VA'], color='S', orientation='h', template="plotly_dark").update_layout(xaxis=dict(range=[0, 100])), use_container_width=True)
         if not df_va_f.empty: st.data_editor(df_va_f.drop(columns=['MesAno'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
 
-    # --- ABA DE INVESTIMENTOS (O NOVO HOME BROKER) ---
     with aba_carteira:
         st.subheader("💼 Património e Rendimentos")
         df_inv = buscar_investimentos(usuario)
@@ -688,7 +689,6 @@ else:
                 st.write("**As suas posições em aberto:**")
                 st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
 
-            # --- BLOCO: EDITAR E EXCLUIR INVESTIMENTOS ---
             st.markdown("---")
             with st.expander("✏️ Gerir Investimentos (Editar ou Excluir)", expanded=False):
                 opcoes_inv = df_inv['ID'].astype(str) + " - " + df_inv['Descrição'] + " (R$ " + df_inv['Valor Original'].astype(str) + ")"
@@ -846,7 +846,7 @@ else:
                     if "429" in erro_str or "quota" in erro_str:
                         return "⏳ **O Consultor IA está muito requisitado no momento!**\n\nAtingimos o limite temporário de consultas rápidas da Google. Por favor, aguarde cerca de um minuto e navegue pelas outras abas antes de voltar aqui para receber o seu diagnóstico."
                     else:
-                        return "🛠️ **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
+                        return "🛠️️ **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
             with st.spinner("A gerar a sua análise personalizada..."):
                 texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
