@@ -337,7 +337,15 @@ else:
 
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
-        categoria = st.selectbox("Categoria", ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"], key="cat_lanc")
+        
+        # --- ATUALIZAÇÃO: Categorias Dinâmicas (Lançamento Manual) ---
+        if tipo_lancamento == "Despesa":
+            opcoes_categoria = ["Alimentação", "Compras", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde e Cuidados pessoais", "Educação", "Outros"]
+        else:
+            opcoes_categoria = ["Salário", "Freelance", "Rendimento", "Outros"]
+            
+        categoria = st.selectbox("Categoria", opcoes_categoria, key="cat_lanc")
+        
         conta_lancamento = st.selectbox("Conta", ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"], key="conta_lanc")
         forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"], key="forma_pag")
         status_lancamento = st.selectbox("Status", ["Pago", "Pendente"], key="status_lanc")
@@ -478,7 +486,6 @@ else:
                         g1, g2 = st.columns(2)
                         res_cat = df_desp.groupby('Categoria')['Valor'].sum().reset_index()
                         with g1: 
-                            # --- ATUALIZAÇÃO: GRÁFICO CATEGORIA ESTILO INFOGRÁFICO ---
                             fig_cat = px.pie(res_cat, values='Valor', names='Categoria', title="Por Categoria", hole=0.6, template="plotly_dark")
                             fig_cat.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0E1117', width=2)))
                             fig_cat.update_layout(showlegend=False, margin=dict(t=40, b=40, l=40, r=40))
@@ -496,7 +503,6 @@ else:
                         
                         g3, g4 = st.columns(2)
                         with g3: 
-                            # --- ATUALIZAÇÃO: GRÁFICO DÉBITO/CRÉDITO ESTILO INFOGRÁFICO ---
                             fig_forma_pie = px.pie(res_forma, values='Valor', names='Forma Agrupada', title="Crédito vs Débito/Pix", hole=0.6, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
                             fig_forma_pie.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0E1117', width=2)))
                             fig_forma_pie.update_layout(showlegend=False, margin=dict(t=40, b=40, l=40, r=40))
@@ -595,8 +601,15 @@ else:
                             with c1:
                                 n_tipo = st.selectbox("Tipo", ["Despesa", "Entrada"], index=0 if linha['Tipo']=="Despesa" else 1, key=f"tipo_{id_selecionado}")
                                 
-                                ops_cat = ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Freelance", "Rendimento", "Outros"]
-                                n_cat = st.selectbox("Categoria", ops_cat, index=ops_cat.index(linha['Categoria']) if linha['Categoria'] in ops_cat else 10, key=f"cat_{id_selecionado}")
+                                # --- ATUALIZAÇÃO: Categorias Dinâmicas (Edição) ---
+                                if n_tipo == "Despesa":
+                                    ops_cat = ["Alimentação", "Compras", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde e Cuidados pessoais", "Educação", "Outros"]
+                                else:
+                                    ops_cat = ["Salário", "Freelance", "Rendimento", "Outros"]
+                                
+                                # Define o índice com segurança (se a categoria não existir na lista, vai para "Outros")
+                                indice_cat = ops_cat.index(linha['Categoria']) if linha['Categoria'] in ops_cat else len(ops_cat) - 1
+                                n_cat = st.selectbox("Categoria", ops_cat, index=indice_cat, key=f"cat_{id_selecionado}")
                                 
                                 n_valor = st.number_input("Valor (R$)", min_value=0.01, value=float(linha['Valor']), key=f"val_{id_selecionado}")
                                 n_data = st.date_input("Data", pd.to_datetime(linha['Data']).date(), key=f"data_{id_selecionado}")
@@ -715,7 +728,6 @@ else:
             st.markdown("---")
             g1, g2 = st.columns([1, 2])
             with g1: 
-                # --- ATUALIZAÇÃO: GRÁFICO INVESTIMENTOS ESTILO INFOGRÁFICO ---
                 fig_inv = px.pie(df_inv.groupby('Tipo')['Valor Atualizado'].sum().reset_index(), values='Valor Atualizado', names='Tipo', hole=0.6, template="plotly_dark", title="Alocação Atual")
                 fig_inv.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0E1117', width=2)))
                 fig_inv.update_layout(showlegend=False, margin=dict(t=40, b=40, l=40, r=40))
