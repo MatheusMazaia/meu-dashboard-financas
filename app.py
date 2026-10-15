@@ -11,41 +11,55 @@ import google.generativeai as genai
 import json
 from cryptography.fernet import Fernet
 import base64
+from fpdf import FPDF
+import unicodedata
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Maza Finance", layout="wide")
 
-# --- CONEXÃO COM BANCO DE DADOS E IA ---
+# Compatibilidade segura para st.fragment (isola partes da tela para não recarregar a página toda)
+fragmento_rapido = getattr(st, "fragment", lambda f: f)
+
+# --- CONEXÃO COM BANCO DE DADOS, IA E CRIPTOGRAFIA (EM CACHE) ---
 @st.cache_resource(ttl=300)
 def init_connection():
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+    conn = psycopg2.connect(st.secrets["DATABASE_URL"])
+    conn.autocommit = True
+    return conn
+
+def obter_cursor():
+    global conn
+    try:
+        if conn.closed != 0:
+            st.cache_resource.clear()
+            conn = init_connection()
+        return conn.cursor()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        st.cache_resource.clear()
+        conn = init_connection()
+        return conn.cursor()
 
 conn = init_connection()
+c = obter_cursor()
 
-try:
-    conn.autocommit = True
-    c = conn.cursor()
-    c.execute("SELECT 1")
-except (psycopg2.OperationalError, psycopg2.InterfaceError):
-    st.cache_resource.clear()
-    conn = init_connection()
-    conn.autocommit = True
-    c = conn.cursor()
+@st.cache_resource
+def init_ia():
+    try:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        return genai.GenerativeModel('gemini-3.6-flash'), ""
+    except Exception as e:
+        return None, str(e)
 
-# Configuração da IA Gemini
-erro_ia = ""
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_ia = genai.GenerativeModel('gemini-3.6-flash')
-except Exception as e:
-    modelo_ia = None
-    erro_ia = str(e)
+modelo_ia, erro_ia = init_ia()
 
-# --- MOTOR DE CRIPTOGRAFIA ---
-try:
-    fernet = Fernet(st.secrets["ENCRYPTION_KEY"])
-except Exception:
-    fernet = None
+@st.cache_resource
+def init_fernet():
+    try:
+        return Fernet(st.secrets["ENCRYPTION_KEY"])
+    except Exception:
+        return None
+
+fernet = init_fernet()
 
 def criptografar(texto):
     if fernet and texto:
@@ -60,23 +74,24 @@ def descriptografar(texto):
             return texto 
     return texto
 
-# --- OTIMIZAÇÃO 1: CACHE NAS MIGRAÇÕES E NOVAS TABELAS ---
+# --- OTIMIZAÇÃO: CACHE NAS MIGRAÇÕES E TABELAS ---
 @st.cache_resource
 def inicializar_banco_dados():
-    c.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario VARCHAR(255) PRIMARY KEY, senha VARCHAR(255))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), tipo VARCHAR(50), categoria VARCHAR(255), valor REAL, descricao TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS metas (usuario VARCHAR(255), categoria VARCHAR(255), limite REAL, PRIMARY KEY (usuario, categoria))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS investimentos (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), tipo VARCHAR(50), valor REAL, descricao TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS va_config (usuario VARCHAR(255) PRIMARY KEY, saldo REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS va_transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), valor REAL, descricao TEXT)''')
+    cur = obter_cursor()
+    cur.execute('''CREATE TABLE IF NOT EXISTS usuarios (usuario VARCHAR(255) PRIMARY KEY, senha VARCHAR(255))''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), tipo VARCHAR(50), categoria VARCHAR(255), valor REAL, descricao TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS metas (usuario VARCHAR(255), categoria VARCHAR(255), limite REAL, PRIMARY KEY (usuario, categoria))''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS investimentos (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), tipo VARCHAR(50), valor REAL, descricao TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS va_config (usuario VARCHAR(255) PRIMARY KEY, saldo REAL)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS va_transacoes (id SERIAL PRIMARY KEY, usuario VARCHAR(255), data VARCHAR(255), valor REAL, descricao TEXT)''')
     
-    c.execute('''CREATE TABLE IF NOT EXISTS assinaturas (id SERIAL PRIMARY KEY, usuario VARCHAR(255), nome VARCHAR(255), categoria VARCHAR(255), valor REAL, dia_vencimento INTEGER, conta VARCHAR(255), forma_pagamento VARCHAR(50))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS log_assinaturas (id_assinatura INTEGER, mes_ano VARCHAR(20), PRIMARY KEY(id_assinatura, mes_ano))''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS assinaturas (id SERIAL PRIMARY KEY, usuario VARCHAR(255), nome VARCHAR(255), categoria VARCHAR(255), valor REAL, dia_vencimento INTEGER, conta VARCHAR(255), forma_pagamento VARCHAR(50))''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS log_assinaturas (id_assinatura INTEGER, mes_ano VARCHAR(20), PRIMARY KEY(id_assinatura, mes_ano))''')
 
     def check_and_add_column(table, column, col_type, default_val):
-        c.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' and column_name='{column}'")
-        if not c.fetchone():
-            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type} DEFAULT '{default_val}'")
+        cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' and column_name='{column}'")
+        if not cur.fetchone():
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type} DEFAULT '{default_val}'")
 
     check_and_add_column('transacoes', 'conta', 'VARCHAR(255)', 'Geral')
     check_and_add_column('transacoes', 'status', 'VARCHAR(50)', 'Pago')
@@ -96,6 +111,18 @@ def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao, conta,
     desc_segura = criptografar(descricao)
     c.execute("INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
               (usuario, data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento))
+    buscar_transacoes.clear()
+
+# Inserção em lote para compras parceladas (1 única viagem ao banco de dados)
+def adicionar_transacoes_lote(lista_lancamentos):
+    dados_seguros = [
+        (u, dt, tp, cat, val, criptografar(desc), cta, stt, fp)
+        for (u, dt, tp, cat, val, desc, cta, stt, fp) in lista_lancamentos
+    ]
+    c.executemany(
+        "INSERT INTO transacoes (usuario, data, tipo, categoria, valor, descricao, conta, status, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        dados_seguros
+    )
     buscar_transacoes.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -135,6 +162,7 @@ def adicionar_assinatura(usuario, nome, categoria, valor, dia, conta, forma_paga
     c.execute("INSERT INTO assinaturas (usuario, nome, categoria, valor, dia_vencimento, conta, forma_pagamento) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
               (usuario, nome, categoria, valor, dia, conta, forma_pagamento))
     buscar_assinaturas.clear()
+    st.session_state['assinaturas_verificadas'] = False
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_assinaturas(usuario):
@@ -247,10 +275,113 @@ def add_months(sourcedate, months):
     day = min(sourcedate.day, calendar.monthrange(year, month)[1])
     return datetime(year, month, day).date()
 
+# --- OTIMIZAÇÃO: GERAÇÃO DE PDF EM CACHE ---
+def remover_acentos(texto):
+    return ''.join(ch for ch in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(ch) != 'Mn')
+
+@st.cache_data(show_spinner=False)
+def gerar_pdf_relatorio(df_dados, mes_selecionado, conta_selecionada, entradas_pagas, despesas_pagas):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="Relatorio Financeiro Mensal", ln=True, align='C')
+    pdf.set_font("Arial", '', 12)
+    
+    header_txt = f"Mes de Referencia: {mes_selecionado}"
+    if conta_selecionada != "Todas as Contas":
+        header_txt += f" | Conta: {conta_selecionada}"
+        
+    pdf.cell(200, 10, txt=f"{header_txt} | Maza Finance", ln=True, align='C')
+    pdf.ln(5)
+
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 8, txt=f"Total de Entradas: R$ {entradas_pagas:.2f}", ln=True)
+    pdf.cell(200, 8, txt=f"Total de Despesas: R$ {despesas_pagas:.2f}", ln=True)
+    pdf.cell(200, 8, txt=f"Saldo Liquido: R$ {entradas_pagas - despesas_pagas:.2f}", ln=True)
+    pdf.ln(5)
+
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(22, 8, "Data", border=1, align='C')
+    pdf.cell(22, 8, "Tipo", border=1, align='C')
+    pdf.cell(40, 8, "Categoria", border=1, align='C')
+    pdf.cell(25, 8, "Valor", border=1, align='C')
+    pdf.cell(55, 8, "Descricao", border=1, align='C')
+    pdf.cell(26, 8, "Conta", border=1, align='C')
+    pdf.ln()
+
+    pdf.set_font("Arial", '', 8)
+    for _, row in df_dados.iterrows():
+        data_f = pd.to_datetime(row['Data']).strftime('%d/%m/%Y')
+        pdf.cell(22, 8, data_f, border=1, align='C')
+        pdf.cell(22, 8, remover_acentos(row['Tipo']), border=1, align='C')
+        pdf.cell(40, 8, remover_acentos(row['Categoria'])[:20], border=1, align='C')
+        pdf.cell(25, 8, f"R$ {row['Valor']:.2f}", border=1, align='C')
+        pdf.cell(55, 8, remover_acentos(row['Descrição'])[:35], border=1, align='L')
+        pdf.cell(26, 8, remover_acentos(row['Conta'])[:12], border=1, align='C')
+        pdf.ln()
+
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- OTIMIZAÇÃO: SIMULADOR ISOLADO EM FRAGMENTO ---
+@fragmento_rapido
+def renderizar_simulador():
+    st.subheader("🔮 Simulador de Rendimentos")
+    st.write("Projete o crescimento do seu dinheiro ao longo do tempo com a magia dos juros compostos.")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        val_inicial = st.number_input("Valor Inicial (R$)", min_value=0.0, value=1000.0, step=100.0)
+    with col2:
+        aporte_mensal = st.number_input("Aporte Mensal (R$)", min_value=0.0, value=200.0, step=50.0)
+    with col3:
+        taxa_anual = st.number_input("Taxa Anual (%)", min_value=0.0, value=10.5, step=0.5, help="Ex: 10.5% ao ano (Aprox. Selic/CDI atual)")
+    with col4:
+        anos = st.number_input("Período (Anos)", min_value=1, max_value=50, value=5, step=1)
+
+    taxa_mensal = (1 + taxa_anual / 100) ** (1 / 12) - 1
+    meses = int(anos * 12)
+
+    saldo = val_inicial
+    total_investido = val_inicial
+    dados_grafico = [{'Mês': 0, 'Total Investido': total_investido, 'Saldo Projetado': saldo}]
+
+    for m in range(1, meses + 1):
+        saldo = saldo * (1 + taxa_mensal) + aporte_mensal
+        total_investido += aporte_mensal
+        dados_grafico.append({'Mês': m, 'Total Investido': total_investido, 'Saldo Projetado': saldo})
+
+    df_simulacao = pd.DataFrame(dados_grafico)
+
+    rendimento_juros = saldo - total_investido
+    st.markdown("##### Resultado da Simulação")
+    rm1, rm2, rm3 = st.columns(3)
+    with rm1: st.metric("💰 Total Investido (Do seu bolso)", f"R$ {total_investido:,.2f}")
+    with rm2: st.metric("📈 Rendimento (Só em Juros)", f"R$ {rendimento_juros:,.2f}")
+    with rm3: st.metric("🏆 Valor Final Estimado", f"R$ {saldo:,.2f}")
+
+    fig_sim = px.area(
+        df_simulacao, 
+        x='Mês', 
+        y=['Total Investido', 'Saldo Projetado'],
+        labels={'value': 'Valor (R$)', 'variable': 'Curva'},
+        template="plotly_dark",
+        color_discrete_map={'Total Investido': '#4B5563', 'Saldo Projetado': '#00CC96'} 
+    )
+    
+    fig_sim.update_layout(
+        margin=dict(l=20, r=20, t=20, b=20), 
+        hovermode="x unified",
+        legend_title_text=''
+    )
+    st.plotly_chart(fig_sim, use_container_width=True)
+
 # --- SISTEMA DE SESSÃO E CONTADOR DE LIMPEZA DE CAMPOS ---
 if 'logado' not in st.session_state: st.session_state['logado'] = False
 if 'usuario_atual' not in st.session_state: st.session_state['usuario_atual'] = ""
 if 'reset_counter' not in st.session_state: st.session_state['reset_counter'] = 0
+if 'assinaturas_verificadas' not in st.session_state: st.session_state['assinaturas_verificadas'] = False
+if 'diagnosticos_salvos' not in st.session_state: st.session_state['diagnosticos_salvos'] = {}
 
 rc = st.session_state['reset_counter']
 
@@ -271,6 +402,7 @@ if not st.session_state['logado']:
                 if verificar_login(user_limpo, senha_login):
                     st.session_state['logado'] = True
                     st.session_state['usuario_atual'] = user_limpo
+                    st.session_state['assinaturas_verificadas'] = False
                     st.rerun()
                 else: 
                     st.error("Credenciais incorretas!")
@@ -291,6 +423,7 @@ if not st.session_state['logado']:
                         adicionar_usuario(novo_user_limpo, nova_senha)
                         st.session_state['logado'] = True
                         st.session_state['usuario_atual'] = novo_user_limpo
+                        st.session_state['assinaturas_verificadas'] = False
                         st.success("Conta criada! A carregar...")
                         st.rerun()
                     except IntegrityError: 
@@ -301,12 +434,16 @@ else:
     usuario = st.session_state['usuario_atual']
     mes_atual_sistema = datetime.today().strftime('%m/%Y')
     
-    verificar_e_lancar_assinaturas(usuario)
+    # Só verifica assinaturas 1 vez por sessão (ou quando adiciona uma nova)
+    if not st.session_state.get('assinaturas_verificadas', False):
+        verificar_e_lancar_assinaturas(usuario)
+        st.session_state['assinaturas_verificadas'] = True
     
     st.sidebar.title(f"👤 Olá, {usuario}")
     if st.sidebar.button("Sair (Logout)"):
         st.session_state['logado'] = False
         st.session_state['usuario_atual'] = ""
+        st.session_state['assinaturas_verificadas'] = False
         st.rerun()
         
     st.sidebar.markdown("---")
@@ -321,7 +458,6 @@ else:
             if texto_usuario:
                 with st.spinner("A pensar..."):
                     try:
-                        model = genai.GenerativeModel('gemini-3.6-flash')
                         prompt_sistema = f'''
                         Você é um assistente financeiro. Extraia os dados da transação.
                         Siga estritamente estas regras de padronização:
@@ -335,7 +471,7 @@ else:
                         {{"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Crédito", "conta": "Nubank", "status": "Pago"}}
                         Texto do usuário: {texto_usuario}
                         '''
-                        resposta = model.generate_content(prompt_sistema)
+                        resposta = modelo_ia.generate_content(prompt_sistema)
                         texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
                         dados_ia = json.loads(texto_limpo)
                         data_hoje = str(datetime.today().date())
@@ -378,9 +514,13 @@ else:
         
         if st.button("Guardar Manual", type="primary", use_container_width=True):
             valor_parcela = valor_lancamento / parcelas
+            lote_parcelas = []
             for i in range(parcelas):
                 desc_parcela = f"{descricao_lancamento} ({i+1}/{parcelas})" if parcelas > 1 else descricao_lancamento
-                adicionar_transacao(usuario, str(add_months(data_lancamento, i) if parcelas > 1 else data_lancamento), tipo_lancamento, categoria, valor_parcela, desc_parcela, conta_lancamento, status_lancamento, forma_pagamento)
+                data_parc = str(add_months(data_lancamento, i) if parcelas > 1 else data_lancamento)
+                lote_parcelas.append((usuario, data_parc, tipo_lancamento, categoria, valor_parcela, desc_parcela, conta_lancamento, status_lancamento, forma_pagamento))
+            
+            adicionar_transacoes_lote(lote_parcelas)
             st.session_state['reset_counter'] += 1
             st.success("Lançamento guardado!")
             st.rerun()
@@ -435,12 +575,17 @@ else:
 
     # --- CORPO DO DASHBOARD ---
     st.title("📊 Maza Finance")
+    
+    # Busca única de transações reaproveitada nas abas
+    df_global = buscar_transacoes(usuario)
+    
     aba_visao_geral, aba_assinaturas_principal, aba_modulo_va, aba_carteira, aba_saude = st.tabs(["💰 Fluxo de Caixa", "🔄 Assinaturas", "🍔 Vale Alimentação", "💼 Investimentos", "🏆 Saúde Financeira"])
     
     with aba_visao_geral:
-        df = buscar_transacoes(usuario)
-        if df.empty: st.info("Sem lançamentos. Use o menu para adicionar!")
+        if df_global.empty: 
+            st.info("Sem lançamentos. Use o menu para adicionar!")
         else:
+            df = df_global.copy()
             df['Valor'] = df['Valor'].astype(float)
             df['Data_dt'] = pd.to_datetime(df['Data'])
             df['MesAno'] = df['Data_dt'].dt.strftime('%m/%Y')
@@ -450,7 +595,6 @@ else:
                 meses_unicos = df['MesAno'].unique().tolist()
                 meses_ordenados = sorted(meses_unicos, key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
                 opcoes_mes = ["Todos os Meses"] + meses_ordenados
-                # Seleciona automaticamente o mês atual se existir na lista
                 idx_mes_padrao = opcoes_mes.index(mes_atual_sistema) if mes_atual_sistema in opcoes_mes else 0
                 mes_selecionado = st.selectbox("📅 Mês", opcoes_mes, index=idx_mes_padrao)
             with col_filtro2:
@@ -502,7 +646,8 @@ else:
                     st.markdown("---")
 
             if not df_filtrado.empty:
-                entradas_pagas, despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum(), df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
+                entradas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
+                despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 c1, c2, c3, c4 = st.columns(4)
                 with c1: st.metric("Entradas (Pagas)", f"R$ {entradas_pagas:,.2f}")
                 with c2: st.metric("Despesas (Pagas)", f"R$ {despesas_pagas:,.2f}")
@@ -559,54 +704,9 @@ else:
                 st.subheader("📄 Relatório Mensal em PDF")
                 st.write("Exporte o seu extrato do mês com o resumo de indicadores para arquivo ou impressão.")
                 
-                from fpdf import FPDF
-                import unicodedata
-
-                def remover_acentos(texto):
-                    return ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
-
                 try:
-                    pdf = FPDF()
-                    pdf.add_page()
-                    
-                    pdf.set_font("Arial", 'B', 16)
-                    pdf.cell(200, 10, txt="Relatorio Financeiro Mensal", ln=True, align='C')
-                    pdf.set_font("Arial", '', 12)
-                    
-                    header_txt = f"Mes de Referencia: {mes_selecionado}"
-                    if conta_selecionada != "Todas as Contas":
-                        header_txt += f" | Conta: {conta_selecionada}"
-                        
-                    pdf.cell(200, 10, txt=f"{header_txt} | Maza Finance", ln=True, align='C')
-                    pdf.ln(5)
-
-                    pdf.set_font("Arial", 'B', 12)
-                    pdf.cell(200, 8, txt=f"Total de Entradas: R$ {entradas_pagas:.2f}", ln=True)
-                    pdf.cell(200, 8, txt=f"Total de Despesas: R$ {despesas_pagas:.2f}", ln=True)
-                    pdf.cell(200, 8, txt=f"Saldo Liquido: R$ {entradas_pagas - despesas_pagas:.2f}", ln=True)
-                    pdf.ln(5)
-
-                    pdf.set_font("Arial", 'B', 10)
-                    pdf.cell(22, 8, "Data", border=1, align='C')
-                    pdf.cell(22, 8, "Tipo", border=1, align='C')
-                    pdf.cell(40, 8, "Categoria", border=1, align='C')
-                    pdf.cell(25, 8, "Valor", border=1, align='C')
-                    pdf.cell(55, 8, "Descricao", border=1, align='C')
-                    pdf.cell(26, 8, "Conta", border=1, align='C')
-                    pdf.ln()
-
-                    pdf.set_font("Arial", '', 8)
-                    for idx, row in df_filtrado.iterrows():
-                        data_f = pd.to_datetime(row['Data']).strftime('%d/%m/%Y')
-                        pdf.cell(22, 8, data_f, border=1, align='C')
-                        pdf.cell(22, 8, remover_acentos(row['Tipo']), border=1, align='C')
-                        pdf.cell(40, 8, remover_acentos(row['Categoria'])[:20], border=1, align='C')
-                        pdf.cell(25, 8, f"R$ {row['Valor']:.2f}", border=1, align='C')
-                        pdf.cell(55, 8, remover_acentos(row['Descrição'])[:35], border=1, align='L')
-                        pdf.cell(26, 8, remover_acentos(row['Conta'])[:12], border=1, align='C')
-                        pdf.ln()
-
-                    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+                    df_para_pdf = df_filtrado[['Data', 'Tipo', 'Categoria', 'Valor', 'Descrição', 'Conta']].copy()
+                    pdf_bytes = gerar_pdf_relatorio(df_para_pdf, mes_selecionado, conta_selecionada, float(entradas_pagas), float(despesas_pagas))
                     
                     nome_arquivo = f"Maza_Finance_Relatorio_{mes_selecionado.replace('/', '_')}"
                     if conta_selecionada != "Todas as Contas":
@@ -746,7 +846,6 @@ else:
                 }
             )
             
-            # --- NOVO: GERIR GASTOS DO VA (EDITAR OU EXCLUIR) ---
             st.markdown("---")
             with st.expander("✏️ Gerir Gastos do VA (Editar ou Excluir)", expanded=False):
                 opcoes_va_edit = df_va_f['ID'].astype(str) + " - " + df_va_f['Descrição'] + " (R$ " + df_va_f['Valor'].map("{:.2f}".format) + ")"
@@ -879,65 +978,18 @@ else:
                             st.rerun()
 
         st.markdown("---")
-        st.subheader("🔮 Simulador de Rendimentos")
-        st.write("Projete o crescimento do seu dinheiro ao longo do tempo com a magia dos juros compostos.")
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            val_inicial = st.number_input("Valor Inicial (R$)", min_value=0.0, value=1000.0, step=100.0)
-        with col2:
-            aporte_mensal = st.number_input("Aporte Mensal (R$)", min_value=0.0, value=200.0, step=50.0)
-        with col3:
-            taxa_anual = st.number_input("Taxa Anual (%)", min_value=0.0, value=10.5, step=0.5, help="Ex: 10.5% ao ano (Aprox. Selic/CDI atual)")
-        with col4:
-            anos = st.number_input("Período (Anos)", min_value=1, max_value=50, value=5, step=1)
-
-        taxa_mensal = (1 + taxa_anual / 100) ** (1 / 12) - 1
-        meses = int(anos * 12)
-
-        saldo = val_inicial
-        total_investido = val_inicial
-        dados_grafico = [{'Mês': 0, 'Total Investido': total_investido, 'Saldo Projetado': saldo}]
-
-        for m in range(1, meses + 1):
-            saldo = saldo * (1 + taxa_mensal) + aporte_mensal
-            total_investido += aporte_mensal
-            dados_grafico.append({'Mês': m, 'Total Investido': total_investido, 'Saldo Projetado': saldo})
-
-        df_simulacao = pd.DataFrame(dados_grafico)
-
-        rendimento_juros = saldo - total_investido
-        st.markdown("##### Resultado da Simulação")
-        rm1, rm2, rm3 = st.columns(3)
-        with rm1: st.metric("💰 Total Investido (Do seu bolso)", f"R$ {total_investido:,.2f}")
-        with rm2: st.metric("📈 Rendimento (Só em Juros)", f"R$ {rendimento_juros:,.2f}")
-        with rm3: st.metric("🏆 Valor Final Estimado", f"R$ {saldo:,.2f}")
-
-        fig_sim = px.area(
-            df_simulacao, 
-            x='Mês', 
-            y=['Total Investido', 'Saldo Projetado'],
-            labels={'value': 'Valor (R$)', 'variable': 'Curva'},
-            template="plotly_dark",
-            color_discrete_map={'Total Investido': '#4B5563', 'Saldo Projetado': '#00CC96'} 
-        )
-        
-        fig_sim.update_layout(
-            margin=dict(l=20, r=20, t=20, b=20), 
-            hovermode="x unified",
-            legend_title_text=''
-        )
-        st.plotly_chart(fig_sim, use_container_width=True)
+        renderizar_simulador()
 
     with aba_saude:
         st.subheader("🏆 Raio-X Financeiro")
-        df_s = buscar_transacoes(usuario)
-        if not df_s.empty:
+        if not df_global.empty:
+            df_s = df_global.copy()
             df_s['MesAno'] = pd.to_datetime(df_s['Data']).dt.strftime('%m/%Y')
             
             meses_saude = sorted(df_s['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
             idx_saude_padrao = meses_saude.index(mes_atual_sistema) if mes_atual_sistema in meses_saude else len(meses_saude) - 1
-            df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", meses_saude, index=idx_saude_padrao)]
+            mes_saude_sel = st.selectbox("Mês Saúde", meses_saude, index=idx_saude_padrao)
+            df_mes = df_s[df_s['MesAno'] == mes_saude_sel]
             
             e, d = df_mes[df_mes['Tipo'] == 'Entrada']['Valor'].astype(float).sum(), df_mes[df_mes['Tipo'] == 'Despesa']['Valor'].astype(float).sum()
             
@@ -982,7 +1034,6 @@ else:
             @st.cache_data(ttl=3600, show_spinner=False)
             def gerar_diagnostico_ia(score, entradas, despesas, top_gastos):
                 try:
-                    model = genai.GenerativeModel('gemini-3.6-flash')
                     prompt_consultor = f'''
                     Atue como um consultor financeiro experiente.
                     O seu cliente tem uma pontuação de saúde financeira de {score} (escala 0-100).
@@ -996,7 +1047,7 @@ else:
                     
                     Sem markdown exagerado, use bullet points. Fale de forma motivadora.
                     '''
-                    resposta = model.generate_content(prompt_consultor)
+                    resposta = modelo_ia.generate_content(prompt_consultor)
                     return resposta.text
                 except Exception as erro:
                     erro_str = str(erro).lower()
@@ -1005,6 +1056,14 @@ else:
                     else:
                         return "🛠 **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
-            with st.spinner("A gerar a sua análise personalizada..."):
-                texto_diagnostico = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
-                st.info(texto_diagnostico)
+            # --- OTIMIZAÇÃO: IA SOB DEMANDA (NÃO TRAVA AS OUTRAS ABAS) ---
+            chave_diag = f"{mes_saude_sel}_{sc}_{e:.2f}_{d:.2f}"
+            
+            if st.button("✨ Gerar / Atualizar Diagnóstico do Mês com IA", type="primary", use_container_width=True):
+                with st.spinner("A gerar a sua análise personalizada..."):
+                    st.session_state['diagnosticos_salvos'][mes_saude_sel] = gerar_diagnostico_ia(sc, e, d, detalhe_gastos)
+            
+            if mes_saude_sel in st.session_state['diagnosticos_salvos']:
+                st.info(st.session_state['diagnosticos_salvos'][mes_saude_sel])
+            else:
+                st.caption("Clique no botão acima quando quiser que o Consultor IA analise os dados deste mês.")
