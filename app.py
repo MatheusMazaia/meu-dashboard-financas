@@ -17,7 +17,7 @@ import unicodedata
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Maza Finance", layout="wide")
 
-# Compatibilidade segura para st.fragment (isola partes da tela para não recarregar a página toda)
+# Compatibilidade segura para st.fragment
 fragmento_rapido = getattr(st, "fragment", lambda f: f)
 
 # --- CONEXÃO COM BANCO DE DADOS, IA E CRIPTOGRAFIA (EM CACHE) ---
@@ -113,7 +113,6 @@ def adicionar_transacao(usuario, data, tipo, categoria, valor, descricao, conta,
               (usuario, data, tipo, categoria, valor, desc_segura, conta, status, forma_pagamento))
     buscar_transacoes.clear()
 
-# Inserção em lote para compras parceladas (1 única viagem ao banco de dados)
 def adicionar_transacoes_lote(lista_lancamentos):
     dados_seguros = [
         (u, dt, tp, cat, val, criptografar(desc), cta, stt, fp)
@@ -163,6 +162,11 @@ def adicionar_assinatura(usuario, nome, categoria, valor, dia, conta, forma_paga
               (usuario, nome, categoria, valor, dia, conta, forma_pagamento))
     buscar_assinaturas.clear()
     st.session_state['assinaturas_verificadas'] = False
+
+def atualizar_assinatura(id_ass, nome, categoria, valor, dia, conta, forma_pagamento):
+    c.execute("UPDATE assinaturas SET nome=%s, categoria=%s, valor=%s, dia_vencimento=%s, conta=%s, forma_pagamento=%s WHERE id=%s", 
+              (nome, categoria, valor, dia, conta, forma_pagamento, id_ass))
+    buscar_assinaturas.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_assinaturas(usuario):
@@ -434,7 +438,6 @@ else:
     usuario = st.session_state['usuario_atual']
     mes_atual_sistema = datetime.today().strftime('%m/%Y')
     
-    # Só verifica assinaturas 1 vez por sessão (ou quando adiciona uma nova)
     if not st.session_state.get('assinaturas_verificadas', False):
         verificar_e_lancar_assinaturas(usuario)
         st.session_state['assinaturas_verificadas'] = True
@@ -452,36 +455,39 @@ else:
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
-        texto_usuario = st.text_input("Digite a transação (Ex: 'Gastei 50 no mercado no crédito pelo Nubank')", key=f"ia_txt_{rc}")
+        texto_usuario = st.text_input("Digite a transação (Ex: 'Ontem gastei 50 no mercado no crédito pelo Nubank')", key=f"ia_txt_{rc}")
         
         if st.button("Processar com IA", type="primary", use_container_width=True):
             if texto_usuario:
                 with st.spinner("A pensar..."):
                     try:
+                        data_hoje_str = datetime.today().strftime('%Y-%m-%d')
                         prompt_sistema = f'''
                         Você é um assistente financeiro. Extraia os dados da transação.
+                        A data de hoje é: {data_hoje_str}. Se o usuário disser "ontem", calcule a data correta. Se mencionar outro dia relativo, calcule. Se não especificar, use a data de hoje.
                         Siga estritamente estas regras de padronização:
+                        - "data": no formato YYYY-MM-DD.
                         - "tipo": apenas "Despesa" ou "Entrada".
                         - "categoria": se for Despesa, escolha uma entre ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros"]. Se for Entrada, escolha entre ["Salário", "Freelance", "Rendimento", "Outros"].
-                        - "metodo": escolha EXATAMENTE um entre ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]. (Se disser "cartão de crédito", use "Crédito". Se não especificar, use "Débito").
-                        - "conta": se mencionar um banco/carteira, escolha entre ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"]. Se não mencionar, use "Geral".
+                        - "metodo": escolha EXATAMENTE um entre ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"].
+                        - "conta": se mencionar um banco, escolha entre ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"]. Se não mencionar, use "Geral".
                         - "status": "Pago" ou "Pendente" (padrão "Pago").
                         
                         Devolva APENAS um JSON válido neste formato:
-                        {{"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Crédito", "conta": "Nubank", "status": "Pago"}}
+                        {{"valor": 0.0, "data": "{data_hoje_str}", "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Crédito", "conta": "Nubank", "status": "Pago"}}
                         Texto do usuário: {texto_usuario}
                         '''
                         resposta = modelo_ia.generate_content(prompt_sistema)
                         texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
                         dados_ia = json.loads(texto_limpo)
-                        data_hoje = str(datetime.today().date())
                         
+                        data_transacao = dados_ia.get("data", data_hoje_str)
                         metodo_ia = dados_ia.get("metodo", "Débito")
                         if metodo_ia not in ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]:
                             metodo_ia = "Crédito" if "crédito" in metodo_ia.lower() else "Débito"
                             
                         adicionar_transacao(
-                            usuario=usuario, data=data_hoje, tipo=dados_ia.get("tipo", "Despesa"),
+                            usuario=usuario, data=data_transacao, tipo=dados_ia.get("tipo", "Despesa"),
                             categoria=dados_ia.get("categoria", "Outros"), valor=float(dados_ia.get("valor", 0.0)),
                             descricao=dados_ia.get("descricao", "Lançamento Inteligente"), conta=dados_ia.get("conta", "Geral"), 
                             status=dados_ia.get("status", "Pago"), forma_pagamento=metodo_ia
@@ -576,7 +582,6 @@ else:
     # --- CORPO DO DASHBOARD ---
     st.title("📊 Maza Finance")
     
-    # Busca única de transações reaproveitada nas abas
     df_global = buscar_transacoes(usuario)
     
     aba_visao_geral, aba_assinaturas_principal, aba_modulo_va, aba_carteira, aba_saude = st.tabs(["💰 Fluxo de Caixa", "🔄 Assinaturas", "🍔 Vale Alimentação", "💼 Investimentos", "🏆 Saúde Financeira"])
@@ -648,9 +653,27 @@ else:
             if not df_filtrado.empty:
                 entradas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
+                
+                # Cálculo do mês anterior para o indicador delta
+                entradas_antigas, despesas_antigas = 0.0, 0.0
+                if mes_selecionado != "Todos os Meses":
+                    try:
+                        dt_atual_filtro = datetime.strptime(mes_selecionado, "%m/%Y")
+                        mes_passado_str = (dt_atual_filtro.replace(day=1) - timedelta(days=1)).strftime('%m/%Y')
+                        df_passado = df[(df['MesAno'] == mes_passado_str) & (df['Status'] == 'Pago')]
+                        if conta_selecionada != "Todas as Contas":
+                            df_passado = df_passado[df_passado['Conta'] == conta_selecionada]
+                        entradas_antigas = df_passado[df_passado['Tipo'] == 'Entrada']['Valor'].sum()
+                        despesas_antigas = df_passado[df_passado['Tipo'] == 'Despesa']['Valor'].sum()
+                    except Exception:
+                        pass
+                
+                delta_ent = f"R$ {entradas_pagas - entradas_antigas:+.2f} vs mês ant." if mes_selecionado != "Todos os Meses" else None
+                delta_desp = f"R$ {despesas_pagas - despesas_antigas:+.2f} vs mês ant." if mes_selecionado != "Todos os Meses" else None
+
                 c1, c2, c3, c4 = st.columns(4)
-                with c1: st.metric("Entradas (Pagas)", f"R$ {entradas_pagas:,.2f}")
-                with c2: st.metric("Despesas (Pagas)", f"R$ {despesas_pagas:,.2f}")
+                with c1: st.metric("Entradas (Pagas)", f"R$ {entradas_pagas:,.2f}", delta=delta_ent, delta_color="normal" if mes_selecionado != "Todos os Meses" else "off")
+                with c2: st.metric("Despesas (Pagas)", f"R$ {despesas_pagas:,.2f}", delta=delta_desp, delta_color="inverse" if mes_selecionado != "Todos os Meses" else "off")
                 with c3: st.metric("Saldo Atual", f"R$ {entradas_pagas - despesas_pagas:,.2f}")
                 with c4: st.metric("⚠️ A Pagar (Pendentes)", f"R$ {df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pendente')]['Valor'].sum():,.2f}")
                 
@@ -687,10 +710,20 @@ else:
                             st.plotly_chart(fig_bar_forma, use_container_width=True)
                             
                 st.subheader("📋 Extrato")
-                df_edit = df_filtrado.copy()
-                df_edit['Data'] = pd.to_datetime(df_edit['Data']).dt.date
+                
+                # Barra de pesquisa rápida no extrato
+                termo_busca = st.text_input("🔍 Pesquisar no Extrato (ex: Uber, iFood, Salário)", "", key=f"search_extrato_{rc}")
+                df_extrato_view = df_filtrado.copy()
+                if termo_busca:
+                    df_extrato_view = df_extrato_view[df_extrato_view['Descrição'].str.contains(termo_busca, case=False, na=False)]
+                    st.info(f"🔍 Encontrados {len(df_extrato_view)} registos para '{termo_busca}' | Total somado: **R$ {df_extrato_view['Valor'].sum():.2f}**")
+
+                df_extrato_view['Data_parsed'] = pd.to_datetime(df_extrato_view['Data'])
+                df_extrato_view = df_extrato_view.sort_values(by='Data_parsed', ascending=False)
+                df_extrato_view['Data'] = df_extrato_view['Data_parsed'].dt.date
+
                 st.data_editor(
-                    df_edit.drop(columns=['Data_dt', 'MesAno', 'Data_Real'], errors='ignore'),
+                    df_extrato_view.drop(columns=['Data_dt', 'MesAno', 'Data_Real', 'ID', 'Data_parsed'], errors='ignore'),
                     hide_index=True,
                     use_container_width=True,
                     disabled=True,
@@ -786,7 +819,7 @@ else:
                 st.metric("Total de Custos Fixos (Mês)", f"R$ {df_ass['Valor'].sum():,.2f}")
             with c2:
                 st.data_editor(
-                    df_ass,
+                    df_ass.drop(columns=['ID'], errors='ignore'),
                     hide_index=True,
                     use_container_width=True,
                     disabled=True,
@@ -797,17 +830,46 @@ else:
                 )
                 
             st.markdown("---")
-            with st.expander("🗑️ Excluir Assinatura Automática", expanded=False):
-                ops_ass = df_ass['ID'].astype(str) + " - " + df_ass['Nome']
-                escolha_ass = st.selectbox("Selecione o serviço que deseja cancelar:", ops_ass.tolist())
+            with st.expander("✏️ Gerir Assinaturas (Editar ou Excluir)", expanded=False):
+                ops_ass = df_ass['ID'].astype(str) + " - " + df_ass['Nome'] + " (R$ " + df_ass['Valor'].map("{:.2f}".format) + ")"
+                escolha_ass = st.selectbox("Selecione o serviço:", ops_ass.tolist(), key="sel_gestao_ass")
                 
                 if escolha_ass:
-                    id_ass_del = int(escolha_ass.split(" - ")[0])
-                    st.warning("Ao apagar, este serviço não será mais lançado automaticamente nos próximos meses.")
-                    if st.button("Confirmar Exclusão", type="primary", use_container_width=True):
-                        deletar_assinatura(id_ass_del)
-                        st.success("Assinatura removida do sistema!")
-                        st.rerun()
+                    id_ass_sel = int(escolha_ass.split(" - ")[0])
+                    linha_ass = df_ass[df_ass['ID'] == id_ass_sel].iloc[0]
+                    
+                    aba_ed_ass, aba_ex_ass = st.tabs(["✏️ Atualizar Dados", "🗑️ Apagar Registo"])
+                    
+                    with aba_ed_ass:
+                        c1_a, c2_a = st.columns(2)
+                        with c1_a:
+                            n_nome_ass = st.text_input("Serviço", value=linha_ass['Nome'], key=f"n_nome_{id_ass_sel}")
+                            n_val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, value=float(linha_ass['Valor']), format="%.2f", key=f"n_val_{id_ass_sel}")
+                            n_dia_ass = st.number_input("Dia de Vencimento", min_value=1, max_value=31, value=int(linha_ass['Dia Venc.']), key=f"n_dia_{id_ass_sel}")
+                        with c2_a:
+                            ops_cat_ass = ["Lazer", "Moradia", "Educação", "Saúde", "Outros"]
+                            idx_cat_ass = ops_cat_ass.index(linha_ass['Categoria']) if linha_ass['Categoria'] in ops_cat_ass else 4
+                            n_cat_ass = st.selectbox("Categoria", ops_cat_ass, index=idx_cat_ass, key=f"n_cat_{id_ass_sel}")
+                            
+                            ops_conta_ass = ["Nubank", "Itaú", "Inter", "Santander", "Caixa", "Geral"]
+                            idx_conta_ass = ops_conta_ass.index(linha_ass['Conta']) if linha_ass['Conta'] in ops_conta_ass else 5
+                            n_conta_ass = st.selectbox("Conta", ops_conta_ass, index=idx_conta_ass, key=f"n_conta_{id_ass_sel}")
+                            
+                            ops_forma_ass = ["Crédito", "Débito", "Pix", "Boleto"]
+                            idx_forma_ass = ops_forma_ass.index(linha_ass['Forma de Pagamento']) if linha_ass['Forma de Pagamento'] in ops_forma_ass else 0
+                            n_forma_ass = st.selectbox("Forma de Pagto", ops_forma_ass, index=idx_forma_ass, key=f"n_forma_{id_ass_sel}")
+                            
+                        if st.button("💾 Guardar Alterações da Assinatura", type="primary", use_container_width=True, key=f"btn_save_ass_{id_ass_sel}"):
+                            atualizar_assinatura(id_ass_sel, n_nome_ass, n_cat_ass, n_val_ass, n_dia_ass, n_conta_ass, n_forma_ass)
+                            st.success("Assinatura atualizada com sucesso!")
+                            st.rerun()
+                            
+                    with aba_ex_ass:
+                        st.warning(f"Tem a certeza que quer apagar permanentemente **{linha_ass['Nome']}**?")
+                        if st.button("Sim, Excluir Assinatura", type="primary", use_container_width=True, key=f"btn_del_ass_{id_ass_sel}"):
+                            deletar_assinatura(id_ass_sel)
+                            st.error("Assinatura removida do sistema!")
+                            st.rerun()
 
     with aba_modulo_va:
         st.subheader("🍔 Vale Alimentação")
@@ -834,9 +896,12 @@ else:
             
         if not df_va_f.empty:
             df_va_show = df_va_f.drop(columns=['MesAno'], errors='ignore').copy()
-            df_va_show['Data'] = pd.to_datetime(df_va_show['Data']).dt.date
+            df_va_show['Data_parsed'] = pd.to_datetime(df_va_show['Data'])
+            df_va_show = df_va_show.sort_values(by='Data_parsed', ascending=False)
+            df_va_show['Data'] = df_va_show['Data_parsed'].dt.date
+            
             st.data_editor(
-                df_va_show,
+                df_va_show.drop(columns=['ID', 'Data_parsed'], errors='ignore'),
                 hide_index=True,
                 use_container_width=True,
                 disabled=True,
@@ -926,9 +991,12 @@ else:
             with g2: 
                 st.write("**As suas posições em aberto:**")
                 df_inv_show = df_inv.copy()
-                df_inv_show['Data'] = pd.to_datetime(df_inv_show['Data']).dt.date
+                df_inv_show['Data_parsed'] = pd.to_datetime(df_inv_show['Data'])
+                df_inv_show = df_inv_show.sort_values(by='Data_parsed', ascending=False)
+                df_inv_show['Data'] = df_inv_show['Data_parsed'].dt.date
+                
                 st.data_editor(
-                    df_inv_show,
+                    df_inv_show.drop(columns=['ID', 'Data_parsed'], errors='ignore'),
                     hide_index=True,
                     use_container_width=True,
                     disabled=True,
@@ -1056,7 +1124,6 @@ else:
                     else:
                         return "🛠 **Sistema em manutenção temporária.**\n\nO seu Consultor de IA está a ser reiniciado. A sua saúde financeira contínua a ser calculada normalmente acima. Tente novamente mais tarde!"
 
-            # --- OTIMIZAÇÃO: IA SOB DEMANDA (NÃO TRAVA AS OUTRAS ABAS) ---
             chave_diag = f"{mes_saude_sel}_{sc}_{e:.2f}_{d:.2f}"
             
             if st.button("✨ Gerar / Atualizar Diagnóstico do Mês com IA", type="primary", use_container_width=True):
