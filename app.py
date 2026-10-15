@@ -176,7 +176,7 @@ def verificar_e_lancar_assinaturas(usuario):
         if lancou_algo:
             buscar_transacoes.clear()
 
-# --- FUNÇÕES DE INVESTIMENTOS ATUALIZADAS ---
+# --- FUNÇÕES DE INVESTIMENTOS ---
 def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao):
     desc_segura = criptografar(descricao)
     c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, taxa_anual, descricao) VALUES (%s, %s, %s, %s, %s, %s)", 
@@ -204,7 +204,7 @@ def deletar_investimento(id_inv):
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
     buscar_investimentos.clear()
 
-# VA Functions
+# --- FUNÇÕES DE VALE ALIMENTAÇÃO (VA) ---
 def salvar_config_va(usuario, saldo): 
     c.execute("INSERT INTO va_config (usuario, saldo) VALUES (%s, %s) ON CONFLICT (usuario) DO UPDATE SET saldo = EXCLUDED.saldo", (usuario, saldo))
     buscar_config_va.clear()
@@ -218,6 +218,11 @@ def buscar_config_va(usuario):
 def adicionar_transacao_va(usuario, data, valor, descricao):
     desc_segura = criptografar(descricao)
     c.execute("INSERT INTO va_transacoes (usuario, data, valor, descricao) VALUES (%s, %s, %s, %s)", (usuario, data, valor, desc_segura))
+    buscar_transacoes_va.clear()
+
+def atualizar_transacao_va(id_transacao, data, valor, descricao):
+    desc_segura = criptografar(descricao)
+    c.execute("UPDATE va_transacoes SET data=%s, valor=%s, descricao=%s WHERE id=%s", (data, valor, desc_segura, id_transacao))
     buscar_transacoes_va.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -242,9 +247,12 @@ def add_months(sourcedate, months):
     day = min(sourcedate.day, calendar.monthrange(year, month)[1])
     return datetime(year, month, day).date()
 
-# --- SISTEMA DE SESSÃO ---
+# --- SISTEMA DE SESSÃO E CONTADOR DE LIMPEZA DE CAMPOS ---
 if 'logado' not in st.session_state: st.session_state['logado'] = False
 if 'usuario_atual' not in st.session_state: st.session_state['usuario_atual'] = ""
+if 'reset_counter' not in st.session_state: st.session_state['reset_counter'] = 0
+
+rc = st.session_state['reset_counter']
 
 # --- TELA DE LOGIN / CADASTRO ---
 if not st.session_state['logado']:
@@ -291,6 +299,7 @@ if not st.session_state['logado']:
 # --- TELA PRINCIPAL (DASHBOARD) ---
 else:
     usuario = st.session_state['usuario_atual']
+    mes_atual_sistema = datetime.today().strftime('%m/%Y')
     
     verificar_e_lancar_assinaturas(usuario)
     
@@ -306,17 +315,24 @@ else:
     
     with aba_ia:
         st.subheader("🤖 Assistente Inteligente")
-        texto_usuario = st.text_input("Digite a transação (Ex: 'Gastei 50 no mercado no crédito')")
+        texto_usuario = st.text_input("Digite a transação (Ex: 'Gastei 50 no mercado no crédito pelo Nubank')", key=f"ia_txt_{rc}")
         
-        if st.button("Processar com IA", type="primary"):
+        if st.button("Processar com IA", type="primary", use_container_width=True):
             if texto_usuario:
                 with st.spinner("A pensar..."):
                     try:
                         model = genai.GenerativeModel('gemini-3.6-flash')
                         prompt_sistema = f'''
                         Você é um assistente financeiro. Extraia os dados da transação.
-                        Devolva APENAS um JSON no seguinte formato:
-                        {{"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Cartão de Crédito"}}
+                        Siga estritamente estas regras de padronização:
+                        - "tipo": apenas "Despesa" ou "Entrada".
+                        - "categoria": se for Despesa, escolha uma entre ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros"]. Se for Entrada, escolha entre ["Salário", "Freelance", "Rendimento", "Outros"].
+                        - "metodo": escolha EXATAMENTE um entre ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]. (Se disser "cartão de crédito", use "Crédito". Se não especificar, use "Débito").
+                        - "conta": se mencionar um banco/carteira, escolha entre ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"]. Se não mencionar, use "Geral".
+                        - "status": "Pago" ou "Pendente" (padrão "Pago").
+                        
+                        Devolva APENAS um JSON válido neste formato:
+                        {{"valor": 0.0, "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Crédito", "conta": "Nubank", "status": "Pago"}}
                         Texto do usuário: {texto_usuario}
                         '''
                         resposta = model.generate_content(prompt_sistema)
@@ -324,12 +340,17 @@ else:
                         dados_ia = json.loads(texto_limpo)
                         data_hoje = str(datetime.today().date())
                         
+                        metodo_ia = dados_ia.get("metodo", "Débito")
+                        if metodo_ia not in ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]:
+                            metodo_ia = "Crédito" if "crédito" in metodo_ia.lower() else "Débito"
+                            
                         adicionar_transacao(
                             usuario=usuario, data=data_hoje, tipo=dados_ia.get("tipo", "Despesa"),
                             categoria=dados_ia.get("categoria", "Outros"), valor=float(dados_ia.get("valor", 0.0)),
-                            descricao=dados_ia.get("descricao", "Lançamento Inteligente"), conta="Geral", 
-                            status="Pago", forma_pagamento=dados_ia.get("metodo", "Débito")
+                            descricao=dados_ia.get("descricao", "Lançamento Inteligente"), conta=dados_ia.get("conta", "Geral"), 
+                            status=dados_ia.get("status", "Pago"), forma_pagamento=metodo_ia
                         )
+                        st.session_state['reset_counter'] += 1
                         st.success("Lançamento guardado e enviado para a tabela!")
                         st.rerun() 
                     except Exception as e:
@@ -338,9 +359,8 @@ else:
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
         
-        # --- ATUALIZAÇÃO: Categorias Dinâmicas (Lançamento Manual) ---
         if tipo_lancamento == "Despesa":
-            opcoes_categoria = ["Alimentação", "Compras", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde e Cuidados pessoais", "Educação", "Outros"]
+            opcoes_categoria = ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros"]
         else:
             opcoes_categoria = ["Salário", "Freelance", "Rendimento", "Outros"]
             
@@ -350,24 +370,25 @@ else:
         forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"], key="forma_pag")
         status_lancamento = st.selectbox("Status", ["Pago", "Pendente"], key="status_lanc")
         data_lancamento = st.date_input("Data", datetime.today(), format="DD/MM/YYYY", key="data_lanc")
-        valor_lancamento = st.number_input("Valor (R$)", min_value=0.01, format="%.2f", key="valor_lanc")
-        descricao_lancamento = st.text_input("Descrição", key="desc_lanc")
+        valor_lancamento = st.number_input("Valor (R$)", min_value=0.01, format="%.2f", key=f"valor_lanc_{rc}")
+        descricao_lancamento = st.text_input("Descrição", key=f"desc_lanc_{rc}")
         
-        eh_parcelado = st.checkbox("Compra Parcelada?", key="chk_parcela") if tipo_lancamento == "Despesa" else False
-        parcelas = st.number_input("Parcelas", 2, 72, 2, key="num_parcelas") if eh_parcelado else 1
+        eh_parcelado = st.checkbox("Compra Parcelada?", key=f"chk_parcela_{rc}") if tipo_lancamento == "Despesa" else False
+        parcelas = st.number_input("Parcelas", 2, 72, 2, key=f"num_parcelas_{rc}") if eh_parcelado else 1
         
         if st.button("Guardar Manual", type="primary", use_container_width=True):
             valor_parcela = valor_lancamento / parcelas
             for i in range(parcelas):
                 desc_parcela = f"{descricao_lancamento} ({i+1}/{parcelas})" if parcelas > 1 else descricao_lancamento
                 adicionar_transacao(usuario, str(add_months(data_lancamento, i) if parcelas > 1 else data_lancamento), tipo_lancamento, categoria, valor_parcela, desc_parcela, conta_lancamento, status_lancamento, forma_pagamento)
+            st.session_state['reset_counter'] += 1
             st.success("Lançamento guardado!")
             st.rerun()
             
     with aba_assinaturas:
         st.subheader("🔄 Nova Assinatura")
-        nome_ass = st.text_input("Serviço (Ex: Google, Netflix)")
-        val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key="val_ass")
+        nome_ass = st.text_input("Serviço (Ex: Google, Netflix)", key=f"nome_ass_{rc}")
+        val_ass = st.number_input("Mensalidade (R$)", min_value=0.01, format="%.2f", key=f"val_ass_{rc}")
         dia_ass = st.number_input("Dia de Vencimento", min_value=1, max_value=31, value=10, key="dia_ass")
         cat_ass = st.selectbox("Categoria", ["Lazer", "Moradia", "Educação", "Saúde", "Outros"], key="cat_ass")
         conta_ass = st.selectbox("Conta", ["Nubank", "Itaú", "Inter", "Santander", "Caixa", "Geral"], key="conta_ass")
@@ -376,6 +397,7 @@ else:
         if st.button("Registar Serviço", type="primary", use_container_width=True):
             if nome_ass:
                 adicionar_assinatura(usuario, nome_ass, cat_ass, val_ass, dia_ass, conta_ass, forma_ass)
+                st.session_state['reset_counter'] += 1
                 st.success("Registado! Só aparecerá no Extrato no dia do vencimento.")
                 st.rerun()
             else:
@@ -390,20 +412,24 @@ else:
             st.rerun()
             
         st.markdown("---")
-        data_va, valor_va, desc_va = st.date_input("Data Compra", datetime.today(), format="DD/MM/YYYY", key="d_va"), st.number_input("Valor (R$)", 0.01, format="%.2f", key="v_va"), st.text_input("Estabelecimento", key="des_va")
+        data_va = st.date_input("Data Compra", datetime.today(), format="DD/MM/YYYY", key="d_va")
+        valor_va = st.number_input("Valor (R$)", 0.01, format="%.2f", key=f"v_va_{rc}")
+        desc_va = st.text_input("Estabelecimento", key=f"des_va_{rc}")
         if st.button("Guardar Gasto VA", type="primary", use_container_width=True):
             adicionar_transacao_va(usuario, str(data_va), valor_va, desc_va)
+            st.session_state['reset_counter'] += 1
             st.success("Registado!")
             st.rerun()
 
     with aba_investimento:
         tipo_inv = st.selectbox("Tipo", ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"])
         data_inv = st.date_input("Data Inicial", datetime.today(), format="DD/MM/YYYY")
-        valor_inv = st.number_input("Valor Investido (R$)", 0.01, format="%.2f")
-        taxa_inv = st.number_input("Taxa Anual Esperada (%)", 0.0, format="%.2f", help="Ex: 10.5 para 10,5% ao ano.")
-        desc_inv = st.text_input("Descrição", key="d_inv")
+        valor_inv = st.number_input("Valor Investido (R$)", 0.01, format="%.2f", key=f"val_inv_side_{rc}")
+        taxa_inv = st.number_input("Taxa Anual Esperada (%)", 0.0, format="%.2f", help="Ex: 10.5 para 10,5% ao ano.", key=f"taxa_inv_side_{rc}")
+        desc_inv = st.text_input("Descrição", key=f"d_inv_{rc}")
         if st.button("Guardar Investimento", type="primary", use_container_width=True):
             adicionar_investimento(usuario, str(data_inv), tipo_inv, valor_inv, taxa_inv, desc_inv)
+            st.session_state['reset_counter'] += 1
             st.success("Investimento guardado!")
             st.rerun()
 
@@ -423,7 +449,10 @@ else:
             with col_filtro1:
                 meses_unicos = df['MesAno'].unique().tolist()
                 meses_ordenados = sorted(meses_unicos, key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
-                mes_selecionado = st.selectbox("📅 Mês", ["Todos os Meses"] + meses_ordenados)
+                opcoes_mes = ["Todos os Meses"] + meses_ordenados
+                # Seleciona automaticamente o mês atual se existir na lista
+                idx_mes_padrao = opcoes_mes.index(mes_atual_sistema) if mes_atual_sistema in opcoes_mes else 0
+                mes_selecionado = st.selectbox("📅 Mês", opcoes_mes, index=idx_mes_padrao)
             with col_filtro2:
                 contas_disponiveis = sorted(df['Conta'].unique().tolist())
                 conta_selecionada = st.selectbox("🏦 Conta", ["Todas as Contas"] + contas_disponiveis)
@@ -515,7 +544,16 @@ else:
                 st.subheader("📋 Extrato")
                 df_edit = df_filtrado.copy()
                 df_edit['Data'] = pd.to_datetime(df_edit['Data']).dt.date
-                st.data_editor(df_edit.drop(columns=['Data_dt', 'MesAno', 'Data_Real'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
+                st.data_editor(
+                    df_edit.drop(columns=['Data_dt', 'MesAno', 'Data_Real'], errors='ignore'),
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=True,
+                    column_config={
+                        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f")
+                    }
+                )
 
                 st.markdown("---")
                 st.subheader("📄 Relatório Mensal em PDF")
@@ -587,7 +625,7 @@ else:
 
                 st.markdown("---")
                 with st.expander("✏️ Gerir Lançamentos (Editar ou Excluir)", expanded=False):
-                    opcoes = df_filtrado['ID'].astype(str) + " - " + df_filtrado['Descrição'] + " (R$ " + df_filtrado['Valor'].astype(str) + ")"
+                    opcoes = df_filtrado['ID'].astype(str) + " - " + df_filtrado['Descrição'] + " (R$ " + df_filtrado['Valor'].map("{:.2f}".format) + ")"
                     escolha = st.selectbox("Selecione o Lançamento pelo ID ou Nome:", opcoes.tolist())
                     
                     if escolha:
@@ -601,18 +639,16 @@ else:
                             with c1:
                                 n_tipo = st.selectbox("Tipo", ["Despesa", "Entrada"], index=0 if linha['Tipo']=="Despesa" else 1, key=f"tipo_{id_selecionado}")
                                 
-                                # --- ATUALIZAÇÃO: Categorias Dinâmicas (Edição) ---
                                 if n_tipo == "Despesa":
-                                    ops_cat = ["Alimentação", "Compras", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde e Cuidados pessoais", "Educação", "Outros"]
+                                    ops_cat = ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros"]
                                 else:
                                     ops_cat = ["Salário", "Freelance", "Rendimento", "Outros"]
                                 
-                                # Define o índice com segurança (se a categoria não existir na lista, vai para "Outros")
                                 indice_cat = ops_cat.index(linha['Categoria']) if linha['Categoria'] in ops_cat else len(ops_cat) - 1
                                 n_cat = st.selectbox("Categoria", ops_cat, index=indice_cat, key=f"cat_{id_selecionado}")
                                 
-                                n_valor = st.number_input("Valor (R$)", min_value=0.01, value=float(linha['Valor']), key=f"val_{id_selecionado}")
-                                n_data = st.date_input("Data", pd.to_datetime(linha['Data']).date(), key=f"data_{id_selecionado}")
+                                n_valor = st.number_input("Valor (R$)", min_value=0.01, value=float(linha['Valor']), format="%.2f", key=f"val_{id_selecionado}")
+                                n_data = st.date_input("Data", pd.to_datetime(linha['Data']).date(), format="DD/MM/YYYY", key=f"data_{id_selecionado}")
                                 
                             with c2:
                                 n_desc = st.text_input("Descrição", value=linha['Descrição'], key=f"desc_{id_selecionado}")
@@ -631,7 +667,7 @@ else:
                                 st.rerun()
                                 
                         with aba_excluir:
-                            st.warning(f"Tem a certeza que quer apagar permanentemente **{linha['Descrição']}** (R$ {linha['Valor']})?")
+                            st.warning(f"Tem a certeza que quer apagar permanentemente **{linha['Descrição']}** (R$ {linha['Valor']:.2f})?")
                             if st.button("Sim, Excluir Lançamento", type="primary", use_container_width=True, key=f"btn_excluir_{id_selecionado}"):
                                 deletar_transacao(id_selecionado)
                                 st.error("Lançamento apagado!")
@@ -649,7 +685,16 @@ else:
             with c1:
                 st.metric("Total de Custos Fixos (Mês)", f"R$ {df_ass['Valor'].sum():,.2f}")
             with c2:
-                st.data_editor(df_ass, hide_index=True, use_container_width=True, disabled=True)
+                st.data_editor(
+                    df_ass,
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=True,
+                    column_config={
+                        "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                        "Dia Venc.": st.column_config.NumberColumn("Dia Venc.", format="Dia %d")
+                    }
+                )
                 
             st.markdown("---")
             with st.expander("🗑️ Excluir Assinatura Automática", expanded=False):
@@ -672,7 +717,9 @@ else:
             df_va_f['MesAno'] = pd.to_datetime(df_va_f['Data']).dt.strftime('%m/%Y')
             
             meses_va = sorted(df_va_f['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
-            m_va = st.selectbox("📅 Mês VA", ["Todos"] + meses_va)
+            opcoes_va = ["Todos"] + meses_va
+            idx_va_padrao = opcoes_va.index(mes_atual_sistema) if mes_atual_sistema in opcoes_va else 0
+            m_va = st.selectbox("📅 Mês VA", opcoes_va, index=idx_va_padrao)
             df_va_f = df_va_f[df_va_f['MesAno'] == m_va] if m_va != "Todos" else df_va_f
         
         t_gasto = df_va_f['Valor'].sum() if not df_va_f.empty else 0
@@ -684,7 +731,52 @@ else:
         if s_va > 0:
             pct = min((t_gasto / s_va) * 100, 100)
             st.plotly_chart(px.bar(pd.DataFrame({'S': ['Gasto', 'Disp'], 'P': [pct, 100-pct]}), x='P', y=['VA','VA'], color='S', orientation='h', template="plotly_dark").update_layout(xaxis=dict(range=[0, 100])), use_container_width=True)
-        if not df_va_f.empty: st.data_editor(df_va_f.drop(columns=['MesAno'], errors='ignore'), hide_index=True, use_container_width=True, disabled=True)
+            
+        if not df_va_f.empty:
+            df_va_show = df_va_f.drop(columns=['MesAno'], errors='ignore').copy()
+            df_va_show['Data'] = pd.to_datetime(df_va_show['Data']).dt.date
+            st.data_editor(
+                df_va_show,
+                hide_index=True,
+                use_container_width=True,
+                disabled=True,
+                column_config={
+                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f")
+                }
+            )
+            
+            # --- NOVO: GERIR GASTOS DO VA (EDITAR OU EXCLUIR) ---
+            st.markdown("---")
+            with st.expander("✏️ Gerir Gastos do VA (Editar ou Excluir)", expanded=False):
+                opcoes_va_edit = df_va_f['ID'].astype(str) + " - " + df_va_f['Descrição'] + " (R$ " + df_va_f['Valor'].map("{:.2f}".format) + ")"
+                escolha_va_item = st.selectbox("Selecione o Gasto do VA pelo ID ou Nome:", opcoes_va_edit.tolist())
+                
+                if escolha_va_item:
+                    id_va_sel = int(escolha_va_item.split(" - ")[0])
+                    linha_va = df_va_f[df_va_f['ID'] == id_va_sel].iloc[0]
+                    
+                    aba_ed_va, aba_ex_va = st.tabs(["✏️ Atualizar Dados", "🗑️ Apagar Registo"])
+                    
+                    with aba_ed_va:
+                        c1_va, c2_va = st.columns(2)
+                        with c1_va:
+                            n_val_va = st.number_input("Valor (R$)", min_value=0.01, value=float(linha_va['Valor']), format="%.2f", key=f"val_va_ed_{id_va_sel}")
+                            n_dat_va = st.date_input("Data da Compra", pd.to_datetime(linha_va['Data']).date(), format="DD/MM/YYYY", key=f"dat_va_ed_{id_va_sel}")
+                        with c2_va:
+                            n_des_va = st.text_input("Estabelecimento / Descrição", value=linha_va['Descrição'], key=f"des_va_ed_{id_va_sel}")
+                            
+                        if st.button("💾 Guardar Alterações do VA", type="primary", use_container_width=True, key=f"btn_save_va_{id_va_sel}"):
+                            atualizar_transacao_va(id_va_sel, str(n_dat_va), n_val_va, n_des_va)
+                            st.success("Gasto do VA atualizado com sucesso!")
+                            st.rerun()
+                            
+                    with aba_ex_va:
+                        st.warning(f"Tem a certeza que quer apagar permanentemente **{linha_va['Descrição']}** (R$ {linha_va['Valor']:.2f})?")
+                        if st.button("Sim, Excluir Gasto do VA", type="primary", use_container_width=True, key=f"btn_del_va_{id_va_sel}"):
+                            deletar_transacao_va(id_va_sel)
+                            st.error("Gasto do VA apagado!")
+                            st.rerun()
 
     with aba_carteira:
         st.subheader("💼 Património e Rendimentos")
@@ -734,11 +826,25 @@ else:
                 st.plotly_chart(fig_inv, use_container_width=True)
             with g2: 
                 st.write("**As suas posições em aberto:**")
-                st.data_editor(df_inv, hide_index=True, use_container_width=True, disabled=True)
+                df_inv_show = df_inv.copy()
+                df_inv_show['Data'] = pd.to_datetime(df_inv_show['Data']).dt.date
+                st.data_editor(
+                    df_inv_show,
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=True,
+                    column_config={
+                        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "Valor Original": st.column_config.NumberColumn("Valor Original", format="R$ %.2f"),
+                        "Taxa Anual (%)": st.column_config.NumberColumn("Taxa Anual (%)", format="%.2f%%"),
+                        "Valor Atualizado": st.column_config.NumberColumn("Valor Atualizado", format="R$ %.2f"),
+                        "Lucro (R$)": st.column_config.NumberColumn("Lucro (R$)", format="R$ %.2f")
+                    }
+                )
 
             st.markdown("---")
             with st.expander("✏️ Gerir Investimentos (Editar ou Excluir)", expanded=False):
-                opcoes_inv = df_inv['ID'].astype(str) + " - " + df_inv['Descrição'] + " (R$ " + df_inv['Valor Original'].astype(str) + ")"
+                opcoes_inv = df_inv['ID'].astype(str) + " - " + df_inv['Descrição'] + " (R$ " + df_inv['Valor Original'].map("{:.2f}".format) + ")"
                 escolha_inv = st.selectbox("Selecione o Investimento pelo ID ou Nome:", opcoes_inv.tolist())
                 
                 if escolha_inv:
@@ -752,10 +858,10 @@ else:
                         with c1_inv:
                             ops_tipo_inv = ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"]
                             n_tipo_inv = st.selectbox("Tipo de Ativo", ops_tipo_inv, index=ops_tipo_inv.index(linha_inv['Tipo']) if linha_inv['Tipo'] in ops_tipo_inv else 0, key=f"tipo_inv_{id_selecionado_inv}")
-                            n_valor_inv = st.number_input("Valor Investido (R$)", min_value=0.01, value=float(linha_inv['Valor Original']), key=f"val_inv_{id_selecionado_inv}")
+                            n_valor_inv = st.number_input("Valor Investido (R$)", min_value=0.01, value=float(linha_inv['Valor Original']), format="%.2f", key=f"val_inv_{id_selecionado_inv}")
                             
                         with c2_inv:
-                            n_data_inv = st.date_input("Data do Investimento", pd.to_datetime(linha_inv['Data']).date(), key=f"data_inv_{id_selecionado_inv}")
+                            n_data_inv = st.date_input("Data do Investimento", pd.to_datetime(linha_inv['Data']).date(), format="DD/MM/YYYY", key=f"data_inv_{id_selecionado_inv}")
                             n_taxa_inv = st.number_input("Taxa Anual Esperada (%)", min_value=0.0, value=float(linha_inv['Taxa Anual (%)']), format="%.2f", key=f"taxa_inv_{id_selecionado_inv}")
                             
                         n_desc_inv = st.text_input("Descrição", value=linha_inv['Descrição'], key=f"desc_inv_{id_selecionado_inv}")
@@ -766,7 +872,7 @@ else:
                             st.rerun()
                             
                     with aba_excluir_inv:
-                        st.warning(f"Tem a certeza que quer apagar permanentemente **{linha_inv['Descrição']}** (R$ {linha_inv['Valor Original']})?")
+                        st.warning(f"Tem a certeza que quer apagar permanentemente **{linha_inv['Descrição']}** (R$ {linha_inv['Valor Original']:.2f})?")
                         if st.button("Sim, Excluir Investimento", type="primary", use_container_width=True, key=f"btn_excluir_inv_{id_selecionado_inv}"):
                             deletar_investimento(id_selecionado_inv)
                             st.error("Investimento apagado da carteira!")
@@ -830,7 +936,8 @@ else:
             df_s['MesAno'] = pd.to_datetime(df_s['Data']).dt.strftime('%m/%Y')
             
             meses_saude = sorted(df_s['MesAno'].unique().tolist(), key=lambda x: datetime.strptime(x, "%m/%Y"), reverse=False)
-            df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", meses_saude)]
+            idx_saude_padrao = meses_saude.index(mes_atual_sistema) if mes_atual_sistema in meses_saude else len(meses_saude) - 1
+            df_mes = df_s[df_s['MesAno'] == st.selectbox("Mês Saúde", meses_saude, index=idx_saude_padrao)]
             
             e, d = df_mes[df_mes['Tipo'] == 'Entrada']['Valor'].astype(float).sum(), df_mes[df_mes['Tipo'] == 'Despesa']['Valor'].astype(float).sum()
             
