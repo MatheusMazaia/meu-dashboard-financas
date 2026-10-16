@@ -13,6 +13,9 @@ from cryptography.fernet import Fernet
 import base64
 from fpdf import FPDF
 import unicodedata
+import yfinance as yf
+import PyPDF2
+import io
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Maza Finance", layout="wide")
@@ -97,6 +100,10 @@ def inicializar_banco_dados():
     check_and_add_column('transacoes', 'status', 'VARCHAR(50)', 'Pago')
     check_and_add_column('transacoes', 'forma_pagamento', 'VARCHAR(50)', 'Débito')
     check_and_add_column('investimentos', 'taxa_anual', 'REAL', '0.0')
+    
+    # NOVAS COLUNAS PARA O HOME BROKER
+    check_and_add_column('investimentos', 'ticker', 'VARCHAR(50)', '')
+    check_and_add_column('investimentos', 'quantidade', 'REAL', '0.0')
 
 inicializar_banco_dados()
 
@@ -208,33 +215,46 @@ def verificar_e_lancar_assinaturas(usuario):
         if lancou_algo:
             buscar_transacoes.clear()
 
-# --- FUNÇÕES DE INVESTIMENTOS ---
-def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao):
+# --- FUNÇÕES DE INVESTIMENTOS (ATUALIZADAS PARA O HOME BROKER) ---
+def adicionar_investimento(usuario, data, tipo, valor, taxa_anual, descricao, ticker, quantidade):
     desc_segura = criptografar(descricao)
-    c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, taxa_anual, descricao) VALUES (%s, %s, %s, %s, %s, %s)", 
-              (usuario, data, tipo, valor, taxa_anual, desc_segura))
+    c.execute("INSERT INTO investimentos (usuario, data, tipo, valor, taxa_anual, descricao, ticker, quantidade) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
+              (usuario, data, tipo, valor, taxa_anual, desc_segura, ticker, quantidade))
     buscar_investimentos.clear()
 
-def atualizar_investimento(id_inv, data, tipo, valor, taxa_anual, descricao):
+def atualizar_investimento(id_inv, data, tipo, valor, taxa_anual, descricao, ticker, quantidade):
     desc_segura = criptografar(descricao)
-    c.execute("UPDATE investimentos SET data=%s, tipo=%s, valor=%s, taxa_anual=%s, descricao=%s WHERE id=%s", 
-              (data, tipo, valor, taxa_anual, desc_segura, id_inv))
+    c.execute("UPDATE investimentos SET data=%s, tipo=%s, valor=%s, taxa_anual=%s, descricao=%s, ticker=%s, quantidade=%s WHERE id=%s", 
+              (data, tipo, valor, taxa_anual, desc_segura, ticker, quantidade, id_inv))
     buscar_investimentos.clear()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def buscar_investimentos(usuario):
-    c.execute("SELECT id, data, tipo, valor, taxa_anual, descricao FROM investimentos WHERE usuario = %s", (usuario,))
+    c.execute("SELECT id, data, tipo, valor, taxa_anual, descricao, ticker, quantidade FROM investimentos WHERE usuario = %s", (usuario,))
     linhas = c.fetchall()
     linhas_descriptografadas = []
     for linha in linhas:
         linha_lista = list(linha)
         linha_lista[5] = descriptografar(linha_lista[5])
         linhas_descriptografadas.append(linha_lista)
-    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Valor Original', 'Taxa Anual (%)', 'Descrição'])
+    return pd.DataFrame(linhas_descriptografadas, columns=['ID', 'Data', 'Tipo', 'Valor Original', 'Taxa Anual (%)', 'Descrição', 'Ticker', 'Quantidade'])
 
 def deletar_investimento(id_inv): 
     c.execute("DELETE FROM investimentos WHERE id = %s", (id_inv,))
     buscar_investimentos.clear()
+
+@st.cache_data(ttl=1800, show_spinner=False) # Cache de 30 mins para não bloquear IP do Yahoo Finance
+def obter_cotacao(ticker):
+    if not ticker or ticker.strip() == "":
+        return 0.0
+    try:
+        tk = yf.Ticker(ticker.strip().upper())
+        dados = tk.history(period='1d')
+        if not dados.empty:
+            return float(dados['Close'].iloc[-1])
+        return 0.0
+    except Exception:
+        return 0.0
 
 # --- FUNÇÕES DE VALE ALIMENTAÇÃO (VA) ---
 def salvar_config_va(usuario, saldo): 
@@ -454,49 +474,108 @@ else:
     aba_ia, aba_lancamento, aba_assinaturas, aba_va, aba_investimento = st.sidebar.tabs(["🤖 IA", "💸 Manual", "🔄 Assinaturas", "🍔 VA", "📈 Investir"])
     
     with aba_ia:
-        st.subheader("🤖 Assistente Inteligente")
-        texto_usuario = st.text_input("Digite a transação (Ex: 'Ontem gastei 50 no mercado no crédito pelo Nubank')", key=f"ia_txt_{rc}")
+        aba_ia_chat, aba_ia_pdf = st.tabs(["💬 Chatbot (Texto)", "📂 Extrato Bancário (PDF)"])
         
-        if st.button("Processar com IA", type="primary", use_container_width=True):
-            if texto_usuario:
-                with st.spinner("A pensar..."):
-                    try:
-                        data_hoje_str = datetime.today().strftime('%Y-%m-%d')
-                        prompt_sistema = f'''
-                        Você é um assistente financeiro. Extraia os dados da transação.
-                        A data de hoje é: {data_hoje_str}. Se o usuário disser "ontem", calcule a data correta. Se mencionar outro dia relativo, calcule. Se não especificar, use a data de hoje.
-                        Siga estritamente estas regras de padronização:
-                        - "data": no formato YYYY-MM-DD.
-                        - "tipo": apenas "Despesa" ou "Entrada".
-                        - "categoria": se for Despesa, escolha uma entre ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros"]. Se for Entrada, escolha entre ["Salário", "Freelance", "Rendimento", "Outros"].
-                        - "metodo": escolha EXATAMENTE um entre ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"].
-                        - "conta": se mencionar um banco, escolha entre ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Outra"]. Se não mencionar, use "Geral".
-                        - "status": "Pago" ou "Pendente" (padrão "Pago").
-                        
-                        Devolva APENAS um JSON válido neste formato:
-                        {{"valor": 0.0, "data": "{data_hoje_str}", "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Crédito", "conta": "Nubank", "status": "Pago"}}
-                        Texto do usuário: {texto_usuario}
-                        '''
-                        resposta = modelo_ia.generate_content(prompt_sistema)
-                        texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
-                        dados_ia = json.loads(texto_limpo)
-                        
-                        data_transacao = dados_ia.get("data", data_hoje_str)
-                        metodo_ia = dados_ia.get("metodo", "Débito")
-                        if metodo_ia not in ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"]:
-                            metodo_ia = "Crédito" if "crédito" in metodo_ia.lower() else "Débito"
+        with aba_ia_chat:
+            st.subheader("🤖 Assistente Inteligente")
+            texto_usuario = st.text_input("Digite a transação (Ex: 'Ontem gastei 50 no mercado no crédito pelo Nubank')", key=f"ia_txt_{rc}")
+            
+            if st.button("Processar com IA", type="primary", use_container_width=True):
+                if texto_usuario:
+                    with st.spinner("A pensar..."):
+                        try:
+                            data_hoje_str = datetime.today().strftime('%Y-%m-%d')
+                            prompt_sistema = f'''
+                            Você é um assistente financeiro. Extraia os dados da transação.
+                            A data de hoje é: {data_hoje_str}. Calcule a data correta se o utilizador usar termos relativos.
+                            Regras de padronização:
+                            - "data": no formato YYYY-MM-DD.
+                            - "tipo": apenas "Despesa" ou "Entrada".
+                            - "categoria": ["Alimentação", "Transporte", "Viagens", "Moradia", "Lazer", "Saúde", "Educação", "Outros", "Salário", "Freelance", "Rendimento"].
+                            - "metodo": ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto"].
+                            - "conta": ["Nubank", "Itaú", "Inter", "Bradesco", "Santander", "Caixa", "Banco do Brasil", "Dinheiro", "Geral"].
+                            - "status": "Pago" ou "Pendente".
                             
-                        adicionar_transacao(
-                            usuario=usuario, data=data_transacao, tipo=dados_ia.get("tipo", "Despesa"),
-                            categoria=dados_ia.get("categoria", "Outros"), valor=float(dados_ia.get("valor", 0.0)),
-                            descricao=dados_ia.get("descricao", "Lançamento Inteligente"), conta=dados_ia.get("conta", "Geral"), 
-                            status=dados_ia.get("status", "Pago"), forma_pagamento=metodo_ia
-                        )
-                        st.session_state['reset_counter'] += 1
-                        st.success("Lançamento guardado e enviado para a tabela!")
-                        st.rerun() 
-                    except Exception as e:
-                        st.error(f"Erro ao processar e guardar: {e}")
+                            Devolva APENAS um JSON válido neste formato (sem markdown ou texto extra):
+                            {{"valor": 0.0, "data": "{data_hoje_str}", "categoria": "Alimentação", "tipo": "Despesa", "descricao": "Mercado", "metodo": "Crédito", "conta": "Nubank", "status": "Pago"}}
+                            Texto: {texto_usuario}
+                            '''
+                            resposta = modelo_ia.generate_content(prompt_sistema)
+                            texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
+                            dados_ia = json.loads(texto_limpo)
+                            
+                            adicionar_transacao(
+                                usuario=usuario, data=dados_ia.get("data", data_hoje_str), tipo=dados_ia.get("tipo", "Despesa"),
+                                categoria=dados_ia.get("categoria", "Outros"), valor=float(dados_ia.get("valor", 0.0)),
+                                descricao=dados_ia.get("descricao", "Lançamento IA"), conta=dados_ia.get("conta", "Geral"), 
+                                status=dados_ia.get("status", "Pago"), forma_pagamento=dados_ia.get("metodo", "Débito")
+                            )
+                            st.session_state['reset_counter'] += 1
+                            st.success("Lançamento guardado com sucesso!")
+                            st.rerun() 
+                        except Exception as e:
+                            st.error("Erro ao processar. Tente ser mais claro na descrição.")
+                            
+        with aba_ia_pdf:
+            st.subheader("📄 Leitura de Extrato em PDF")
+            st.write("Faça upload do extrato do seu banco em PDF. A IA vai analisar todas as páginas e categorizar as transações automaticamente para si.")
+            arquivo_pdf = st.file_uploader("Arraste o PDF do extrato aqui", type=['pdf'])
+            
+            if st.button("Analisar e Importar Extrato", type="primary", use_container_width=True):
+                if arquivo_pdf is not None:
+                    with st.spinner("A ler o PDF e a processar dezenas de transações... Isto pode demorar alguns segundos."):
+                        try:
+                            leitor_pdf = PyPDF2.PdfReader(arquivo_pdf)
+                            texto_extrato = ""
+                            for pagina in leitor_pdf.pages:
+                                texto_extrato += pagina.extract_text()
+                                
+                            prompt_leitor_pdf = f'''
+                            Analise este texto extraído de um extrato bancário.
+                            Identifique TODAS as transações financeiras (entradas e saídas de dinheiro).
+                            Ignore saldos acumulados, avisos, publicidade ou cabeçalhos.
+                            
+                            Para cada transação, devolva uma entrada num ARRAY JSON padronizado com as chaves exatas:
+                            - "data": YYYY-MM-DD (deduza o ano pelo contexto se faltar).
+                            - "tipo": "Despesa" (saídas/débitos) ou "Entrada" (créditos/recebimentos).
+                            - "categoria": Classifique de forma inteligente em ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Salário", "Rendimento", "Outros"].
+                            - "valor": número flutuante positivo (ex: 15.50).
+                            - "descricao": O nome do estabelecimento ou origem limpo e capitalizado.
+                            - "metodo": deduza pelo contexto ["Pix", "Débito", "Crédito", "Boleto", "TED/DOC"] ou assuma "Débito".
+                            - "conta": Assuma a conta como "Geral" se não for óbvio qual é o banco.
+                            - "status": sempre "Pago".
+                            
+                            DEVOLVA EXCLUSIVAMENTE O ARRAY JSON (sem markdown). Exemplo de formato:
+                            [
+                              {{"data": "2026-10-05", "tipo": "Despesa", "categoria": "Alimentação", "valor": 45.90, "descricao": "Padaria Silva", "metodo": "Débito", "conta": "Geral", "status": "Pago"}}
+                            ]
+                            
+                            Extrato para análise:
+                            {texto_extrato}
+                            '''
+                            
+                            resposta = modelo_ia.generate_content(prompt_leitor_pdf)
+                            texto_limpo = resposta.text.strip().replace("```json", "").replace("```", "")
+                            lista_transacoes_ia = json.loads(texto_limpo)
+                            
+                            lote_importacao = []
+                            for t in lista_transacoes_ia:
+                                lote_importacao.append((
+                                    usuario, t.get("data", datetime.today().strftime('%Y-%m-%d')),
+                                    t.get("tipo", "Despesa"), t.get("categoria", "Outros"),
+                                    float(t.get("valor", 0.0)), t.get("descricao", "Importação PDF"),
+                                    t.get("conta", "Geral"), "Pago", t.get("metodo", "Débito")
+                                ))
+                                
+                            if lote_importacao:
+                                adicionar_transacoes_lote(lote_importacao)
+                                st.success(f"Magia feita! {len(lote_importacao)} transações foram lidas e importadas para o seu Fluxo de Caixa.")
+                            else:
+                                st.warning("A IA leu o PDF mas não encontrou transações financeiras válidas.")
+                        except Exception as e:
+                            st.error(f"Erro ao processar o PDF. Certifique-se de que é um extrato de texto legível. Detalhe: {e}")
+                else:
+                    st.warning("Por favor, faça upload de um ficheiro PDF primeiro.")
 
     with aba_lancamento:
         tipo_lancamento = st.selectbox("Tipo", ["Despesa", "Entrada"], key="tipo_lanc")
@@ -567,16 +646,33 @@ else:
             st.success("Registado!")
             st.rerun()
 
+    # --- NOVO: ABA DE INVESTIMENTOS COM SUPORTE A AÇÕES/CRIPTO E TICKER ---
     with aba_investimento:
-        tipo_inv = st.selectbox("Tipo", ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"])
-        data_inv = st.date_input("Data Inicial", datetime.today(), format="DD/MM/YYYY")
-        valor_inv = st.number_input("Valor Investido (R$)", 0.01, format="%.2f", key=f"val_inv_side_{rc}")
-        taxa_inv = st.number_input("Taxa Anual Esperada (%)", 0.0, format="%.2f", help="Ex: 10.5 para 10,5% ao ano.", key=f"taxa_inv_side_{rc}")
-        desc_inv = st.text_input("Descrição", key=f"d_inv_{rc}")
+        tipo_inv = st.selectbox("Tipo de Ativo", ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"], key="tipo_inv_menu")
+        data_inv = st.date_input("Data da Compra", datetime.today(), format="DD/MM/YYYY")
+        
+        if tipo_inv in ["Ações", "FIIs", "Cripto"]:
+            st.info("💡 **Mercado Variável:** O sistema vai ligar-se à bolsa para ler o preço atual deste ativo automaticamente.")
+            col_tk1, col_tk2 = st.columns(2)
+            with col_tk1:
+                ticker_inv = st.text_input("Código / Ticker (Ex: PETR4.SA, BTC-USD)", key=f"tk_inv_{rc}")
+            with col_tk2:
+                qtd_inv = st.number_input("Quantidade", min_value=0.0001, format="%.4f", key=f"qtd_inv_{rc}")
+            
+            valor_inv = st.number_input("Valor Total Investido (Do seu bolso, em R$)", 0.01, format="%.2f", key=f"val_inv_side_{rc}")
+            taxa_inv = 0.0 # Renda variável não usa juros compostos fixos
+        else:
+            ticker_inv = ""
+            qtd_inv = 0.0
+            valor_inv = st.number_input("Valor Investido (R$)", 0.01, format="%.2f", key=f"val_inv_side_{rc}")
+            taxa_inv = st.number_input("Taxa Anual Esperada (%)", 0.0, format="%.2f", help="Ex: 10.5 para 10,5% ao ano.", key=f"taxa_inv_side_{rc}")
+            
+        desc_inv = st.text_input("Descrição / Corretora", key=f"d_inv_{rc}")
+        
         if st.button("Guardar Investimento", type="primary", use_container_width=True):
-            adicionar_investimento(usuario, str(data_inv), tipo_inv, valor_inv, taxa_inv, desc_inv)
+            adicionar_investimento(usuario, str(data_inv), tipo_inv, valor_inv, taxa_inv, desc_inv, ticker_inv, qtd_inv)
             st.session_state['reset_counter'] += 1
-            st.success("Investimento guardado!")
+            st.success("Investimento guardado na sua carteira!")
             st.rerun()
 
     # --- CORPO DO DASHBOARD ---
@@ -654,7 +750,6 @@ else:
                 entradas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Entrada') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 despesas_pagas = df_filtrado[(df_filtrado['Tipo'] == 'Despesa') & (df_filtrado['Status'] == 'Pago')]['Valor'].sum()
                 
-                # Cálculo do mês anterior para o indicador delta
                 entradas_antigas, despesas_antigas = 0.0, 0.0
                 if mes_selecionado != "Todos os Meses":
                     try:
@@ -711,7 +806,6 @@ else:
                             
                 st.subheader("📋 Extrato")
                 
-                # Barra de pesquisa rápida no extrato
                 termo_busca = st.text_input("🔍 Pesquisar no Extrato (ex: Uber, iFood, Salário)", "", key=f"search_extrato_{rc}")
                 df_extrato_view = df_filtrado.copy()
                 if termo_busca:
@@ -942,8 +1036,9 @@ else:
                             st.error("Gasto do VA apagado!")
                             st.rerun()
 
+    # --- NOVO HOME BROKER COM YFINANCE ---
     with aba_carteira:
-        st.subheader("💼 Património e Rendimentos")
+        st.subheader("💼 Património e Rendimentos (Live)")
         df_inv = buscar_investimentos(usuario)
         
         if df_inv.empty: 
@@ -953,19 +1048,28 @@ else:
             valores_atualizados = []
             lucros = []
             
-            for idx, row in df_inv.iterrows():
-                data_investimento = pd.to_datetime(row['Data']).date()
-                dias_passados = (hoje - data_investimento).days
-                if dias_passados < 0: dias_passados = 0
-                
-                valor_orig = float(row['Valor Original'])
-                taxa_aa = float(row['Taxa Anual (%)'])
-                
-                valor_atual = valor_orig * ((1 + taxa_aa / 100) ** (dias_passados / 365))
-                lucro = valor_atual - valor_orig
-                
-                valores_atualizados.append(round(valor_atual, 2))
-                lucros.append(round(lucro, 2))
+            with st.spinner("A consultar a bolsa em tempo real..."):
+                for idx, row in df_inv.iterrows():
+                    valor_orig = float(row['Valor Original'])
+                    
+                    # Se for mercado variável, vai à internet ler o preço de hoje
+                    if row['Tipo'] in ['Ações', 'FIIs', 'Cripto'] and row['Ticker'].strip() != "":
+                        preco_live = obter_cotacao(row['Ticker'])
+                        if preco_live > 0:
+                            valor_atual = float(row['Quantidade']) * preco_live
+                        else:
+                            valor_atual = valor_orig # Fallback se falhar a internet
+                    # Se for Renda Fixa, calcula os juros pelo tempo
+                    else:
+                        data_investimento = pd.to_datetime(row['Data']).date()
+                        dias_passados = (hoje - data_investimento).days
+                        if dias_passados < 0: dias_passados = 0
+                        taxa_aa = float(row['Taxa Anual (%)'])
+                        valor_atual = valor_orig * ((1 + taxa_aa / 100) ** (dias_passados / 365))
+                        
+                    lucro = valor_atual - valor_orig
+                    valores_atualizados.append(round(valor_atual, 2))
+                    lucros.append(round(lucro, 2))
                 
             df_inv['Valor Atualizado'] = valores_atualizados
             df_inv['Lucro (R$)'] = lucros
@@ -995,6 +1099,7 @@ else:
                 df_inv_show = df_inv_show.sort_values(by='Data_parsed', ascending=False)
                 df_inv_show['Data'] = df_inv_show['Data_parsed'].dt.date
                 
+                # Oculta colunas vazias de taxa ou ticker para manter a tabela limpa
                 st.data_editor(
                     df_inv_show.drop(columns=['ID', 'Data_parsed'], errors='ignore'),
                     hide_index=True,
@@ -1003,9 +1108,10 @@ else:
                     column_config={
                         "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                         "Valor Original": st.column_config.NumberColumn("Valor Original", format="R$ %.2f"),
-                        "Taxa Anual (%)": st.column_config.NumberColumn("Taxa Anual (%)", format="%.2f%%"),
-                        "Valor Atualizado": st.column_config.NumberColumn("Valor Atualizado", format="R$ %.2f"),
-                        "Lucro (R$)": st.column_config.NumberColumn("Lucro (R$)", format="R$ %.2f")
+                        "Taxa Anual (%)": st.column_config.NumberColumn("Taxa An. (%)", format="%.2f%%"),
+                        "Quantidade": st.column_config.NumberColumn("Qtd.", format="%.4f"),
+                        "Valor Atualizado": st.column_config.NumberColumn("Atualizado", format="R$ %.2f"),
+                        "Lucro (R$)": st.column_config.NumberColumn("Lucro", format="R$ %.2f")
                     }
                 )
 
@@ -1026,15 +1132,16 @@ else:
                             ops_tipo_inv = ["Renda Fixa (CDB/LCI)", "Tesouro Direto", "Ações", "FIIs", "Cripto", "Outros"]
                             n_tipo_inv = st.selectbox("Tipo de Ativo", ops_tipo_inv, index=ops_tipo_inv.index(linha_inv['Tipo']) if linha_inv['Tipo'] in ops_tipo_inv else 0, key=f"tipo_inv_{id_selecionado_inv}")
                             n_valor_inv = st.number_input("Valor Investido (R$)", min_value=0.01, value=float(linha_inv['Valor Original']), format="%.2f", key=f"val_inv_{id_selecionado_inv}")
+                            n_tk = st.text_input("Ticker (Ações/Cripto)", value=linha_inv['Ticker'], key=f"tk_{id_selecionado_inv}")
+                            n_qtd = st.number_input("Quantidade", value=float(linha_inv['Quantidade']), format="%.4f", key=f"qtd_{id_selecionado_inv}")
                             
                         with c2_inv:
                             n_data_inv = st.date_input("Data do Investimento", pd.to_datetime(linha_inv['Data']).date(), format="DD/MM/YYYY", key=f"data_inv_{id_selecionado_inv}")
                             n_taxa_inv = st.number_input("Taxa Anual Esperada (%)", min_value=0.0, value=float(linha_inv['Taxa Anual (%)']), format="%.2f", key=f"taxa_inv_{id_selecionado_inv}")
+                            n_desc_inv = st.text_input("Descrição", value=linha_inv['Descrição'], key=f"desc_inv_{id_selecionado_inv}")
                             
-                        n_desc_inv = st.text_input("Descrição", value=linha_inv['Descrição'], key=f"desc_inv_{id_selecionado_inv}")
-                        
                         if st.button("💾 Guardar Alterações", type="primary", use_container_width=True, key=f"btn_salvar_inv_{id_selecionado_inv}"):
-                            atualizar_investimento(id_selecionado_inv, str(n_data_inv), n_tipo_inv, n_valor_inv, n_taxa_inv, n_desc_inv)
+                            atualizar_investimento(id_selecionado_inv, str(n_data_inv), n_tipo_inv, n_valor_inv, n_taxa_inv, n_desc_inv, n_tk, n_qtd)
                             st.success("Investimento atualizado com sucesso!")
                             st.rerun()
                             
